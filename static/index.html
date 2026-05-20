@@ -220,6 +220,20 @@
           Kurzbeschreibung
           <input id="summaryInput">
         </label>
+        <div id="entityMetaFields" class="option-row">
+          <label>
+            Tags
+            <input id="tagsInput" placeholder="Stadt, Intrige, Kapitel 1">
+          </label>
+          <label>
+            Status
+            <input id="statusInput" placeholder="aktiv, offen, abgeschlossen">
+          </label>
+          <label>
+            Slug
+            <input id="slugInput" placeholder="wird automatisch erzeugt">
+          </label>
+        </div>
         <div id="pageOptions" class="option-row">
           <label>
             Template
@@ -252,6 +266,16 @@
             <h3>Vorschau</h3>
             <div id="markdownPreview" class="markdown-preview"></div>
           </section>
+        </div>
+        <div id="entityGraphFields" class="entity-graph-grid">
+          <label>
+            DM-Notizen
+            <textarea id="privateBodyInput" rows="6" placeholder="Geheimnisse, Spoiler und Vorbereitung nur für DMs"></textarea>
+          </label>
+          <label>
+            Relationen
+            <textarea id="relationsInput" rows="6" placeholder="verbunden_mit | Zielseite | Beschreibung | players"></textarea>
+          </label>
         </div>
         <label>
           Datei oder Bild anhängen

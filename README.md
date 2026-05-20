@@ -151,6 +151,22 @@ Wiki-Seiten unterstützen mehrere Sichtbarkeiten:
 Spieler können eigene Seiten erstellen und deren Sichtbarkeit einschränken. DMs und Admins können alle Seiten der Kampagne verwalten.
 Admins können unabhängig von Kampagnenmitgliedschaften alle Kampagnen und Inhalte einsehen. DMs und Spieler sehen nur Kampagnen, in denen sie Mitglied sind.
 
+## Wiki-Architektur
+
+CampaignCodex organisiert Wiki-Inhalte als verknüpfbare Kampagnen-Entitäten. Orte, NSCs, Fraktionen, Kreaturen, Gegenstände, Quests, Lore und Regeln nutzen dieselbe robuste Basisstruktur: Titel, stabiler Slug, Kategorie, Status, Tags, Spielertext, DM-Notizen und Anhänge.
+
+Du kannst Artikel im Markdown mit `[[Artikelname]]` verlinken. CampaignCodex erzeugt daraus sichtbarkeitsbewusste Erwähnungen und zeigt passende Backlinks als „Erwähnt in“ an. DMs sehen dabei auch Erwähnungen aus DM-Notizen; Spieler sehen nur Links aus Bereichen, die sie lesen dürfen.
+
+Zusätzlich können Artikel explizite Relationen bekommen. Eine Relation wird als Zeile im Format `relation | Zielseite | Beschreibung | Sichtbarkeit` gepflegt, wobei die Sichtbarkeit optional ist und standardmäßig `players` nutzt. Beispiele:
+
+```text
+lives_in | Grauhafen | betreibt dort eine Apotheke | players
+involves | Die verschwundene Glocke | kennt den Auftraggeber | dm
+held_by | Splitterkrone | bewahrt sie im Gewölbe auf
+```
+
+Damit lassen sich Orte, NPCs, Items und Quests nicht nur textlich, sondern als Kampagnen-Wissensgraph miteinander verbinden.
+
 ## Markdown, Anhänge und Suche
 
 Wiki-Seiten und Session-Notizen werden als Markdown geschrieben. Der Editor zeigt rechts eine Live-Vorschau. Dateianhänge und Bilder können beim Speichern einer Seite oder Notiz hinzugefügt werden.

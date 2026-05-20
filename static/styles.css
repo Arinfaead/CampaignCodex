@@ -425,6 +425,67 @@ textarea {
   font-weight: 650;
 }
 
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag {
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--teal-dark);
+  background: #dcefed;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.link-panel,
+.dm-notes {
+  display: grid;
+  gap: 8px;
+  border-left: 3px solid #d5a84d;
+  padding: 8px 0 8px 12px;
+  color: var(--muted);
+  background: #fbfdfe;
+}
+
+.link-panel h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.link-panel div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: baseline;
+}
+
+.link-panel small {
+  flex-basis: 100%;
+}
+
+.text-link,
+.wiki-link {
+  display: inline;
+  min-height: 0;
+  border: 0;
+  padding: 0;
+  color: var(--teal);
+  background: transparent;
+  box-shadow: none;
+  font-weight: 800;
+  text-decoration: underline;
+}
+
+.missing-link {
+  color: var(--accent);
+  font-weight: 800;
+  text-decoration: underline dotted;
+}
+
 .markdown-body,
 .markdown-preview {
   color: #26313d;
@@ -478,13 +539,15 @@ dialog::backdrop {
 }
 
 .option-row,
-.markdown-grid {
+.markdown-grid,
+.entity-graph-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
-.markdown-grid {
+.markdown-grid,
+.entity-graph-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -619,7 +682,8 @@ dialog::backdrop {
   .auth-grid,
   .settings-grid,
   .option-row,
-  .markdown-grid {
+  .markdown-grid,
+  .entity-graph-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -182,19 +182,49 @@ function filteredPages(scope) {
 function renderPageCard(page) {
   const template = templates[page.template_key] || templates.generic;
   const attachments = attachmentsFor("page_id", page.id);
+  const tags = (page.tags || []).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
   return `
-    <article class="card">
+    <article id="page-${page.id}" class="card">
       <div class="meta">
         <span class="pill">${escapeHtml(sections[page.category]?.label || "Wiki")}</span>
         <span>${escapeHtml(template.label)}</span>
         <span>${visibilityLabel(page.visibility)}</span>
+        ${page.status ? `<span>${escapeHtml(page.status)}</span>` : ""}
       </div>
       <h3>${escapeHtml(page.title)}</h3>
+      ${tags ? `<div class="tags">${tags}</div>` : ""}
       ${page.summary ? `<p class="summary">${escapeHtml(page.summary)}</p>` : ""}
       <div class="markdown-body">${markdownToHtml(page.body)}</div>
+      ${canManage() && page.body_private ? `<details class="dm-notes"><summary>DM-Notizen</summary><div class="markdown-body">${markdownToHtml(page.body_private)}</div></details>` : ""}
+      ${renderRelations(page)}
+      ${renderBacklinks(page)}
       ${renderAttachments(attachments)}
       ${page.owner_id === state.user.id || canManage() ? `<button onclick="openPageEditor(${page.id})">Bearbeiten</button>` : ""}
     </article>
+  `;
+}
+
+function renderRelations(page) {
+  if (!page.relations?.length) return "";
+  return `
+    <section class="link-panel">
+      <h4>Verknüpft mit</h4>
+      ${page.relations.map((relation) => {
+        const label = relationLabel(relation.relation_type);
+        const target = relation.target_page_id ? `<button class="text-link" onclick="openWikiLink(${relation.target_page_id})">${escapeHtml(relation.target_title)}</button>` : `<span>${escapeHtml(relation.target_title)}</span>`;
+        return `<div><strong>${escapeHtml(label)}</strong> ${target}${relation.description ? `<small>${escapeHtml(relation.description)}</small>` : ""}</div>`;
+      }).join("")}
+    </section>
+  `;
+}
+
+function renderBacklinks(page) {
+  if (!page.backlinks?.length) return "";
+  return `
+    <section class="link-panel">
+      <h4>Erwähnt in</h4>
+      ${page.backlinks.map((backlink) => `<button class="text-link" onclick="openWikiLink(${backlink.source_page_id})">${escapeHtml(backlink.source_title)}${backlink.source_field === "body_private" ? " · DM" : ""}</button>`).join("")}
+    </section>
   `;
 }
 
@@ -245,11 +275,18 @@ function openPageEditor(id = null, templateKey = "generic") {
   $("editorTitle").textContent = page ? "Wiki-Seite bearbeiten" : "Neuer Wiki-Eintrag";
   $("titleInput").value = page?.title || template.title;
   $("summaryInput").value = page?.summary || "";
+  $("tagsInput").value = (page?.tags || []).join(", ");
+  $("statusInput").value = page?.status || "";
+  $("slugInput").value = page?.slug || "";
   $("templateInput").value = page?.template_key || templateKey;
   $("categoryInput").value = page?.category || template.category;
   $("visibilityInput").value = page?.visibility || template.visibility;
   $("bodyInput").value = page?.body || bodyFromTemplate(template);
+  $("privateBodyInput").value = page?.body_private || "";
+  $("relationsInput").value = relationsToText(page?.relations || []);
   $("pageOptions").style.display = "grid";
+  $("entityMetaFields").style.display = "grid";
+  $("entityGraphFields").style.display = canManage() ? "grid" : "none";
   $("summaryLabel").style.display = "grid";
   $("readerField").style.display = $("visibilityInput").value === "restricted" ? "block" : "none";
   $("attachmentInput").value = "";
@@ -265,8 +302,15 @@ function openNoteEditor(id = null) {
   $("editorTitle").textContent = note ? "Session-Notiz bearbeiten" : "Neue Session-Notiz";
   $("titleInput").value = note?.title || "";
   $("summaryInput").value = "";
+  $("tagsInput").value = "";
+  $("statusInput").value = "";
+  $("slugInput").value = "";
+  $("privateBodyInput").value = "";
+  $("relationsInput").value = "";
   $("bodyInput").value = note?.body || "# Zusammenfassung\n\n## Wichtige Ereignisse\n- \n\n## Offene Fragen\n- \n\n## Loot und Hinweise\n- ";
   $("pageOptions").style.display = "none";
+  $("entityMetaFields").style.display = "none";
+  $("entityGraphFields").style.display = "none";
   $("summaryLabel").style.display = "none";
   $("readerField").style.display = "none";
   $("attachmentInput").value = "";
@@ -295,6 +339,29 @@ function applyTemplate(key) {
   updatePreview();
 }
 
+function parseRelationsInput(value) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [relationType = "related", targetTitle = "", description = "", visibility = "players"] = line.split("|").map((part) => part.trim());
+      return {
+        relation_type: relationType || "related",
+        target_title: targetTitle,
+        description,
+        visibility: visibility || "players",
+      };
+    })
+    .filter((relation) => relation.target_title);
+}
+
+function relationsToText(relations) {
+  return relations
+    .map((relation) => `${relation.relation_type || "related"} | ${relation.target_title || ""}${relation.description ? ` | ${relation.description}` : ""}${relation.visibility && relation.visibility !== "players" ? ` | ${relation.visibility}` : ""}`)
+    .join("\n");
+}
+
 async function saveEditor(event) {
   event.preventDefault();
   const type = $("editorType").value;
@@ -310,6 +377,11 @@ async function saveEditor(event) {
     payload.category = $("categoryInput").value;
     payload.template_key = $("templateInput").value;
     payload.visibility = $("visibilityInput").value;
+    payload.slug = $("slugInput").value;
+    payload.status = $("statusInput").value;
+    payload.tags = $("tagsInput").value.split(",").map((tag) => tag.trim()).filter(Boolean);
+    payload.body_private = $("privateBodyInput").value;
+    payload.relations = parseRelationsInput($("relationsInput").value);
     payload.reader_ids = [...$("readerList").querySelectorAll("input:checked")].map((input) => Number(input.value));
     const result = id ? await api(`/api/pages/${id}`, { method: "PUT", body: JSON.stringify(payload) }) : await api("/api/pages", { method: "POST", body: JSON.stringify(payload) });
     savedId = id || result.id;
@@ -504,11 +576,49 @@ function markdownToHtml(markdown) {
 
 function inlineMarkdown(text) {
   return text
+    .replaceAll(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, target, label) => wikiLinkToHtml(target, label || target))
     .replaceAll(/`([^`]+)`/g, "<code>$1</code>")
     .replaceAll(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replaceAll(/\*([^*]+)\*/g, "<em>$1</em>")
     .replaceAll(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">')
     .replaceAll(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+}
+
+function wikiLinkToHtml(target, label) {
+  const page = findPageByTitleOrSlug(target);
+  if (!page) return `<span class="missing-link">${label}</span>`;
+  return `<button class="wiki-link" onclick="openWikiLink(${page.id})">${label}</button>`;
+}
+
+function findPageByTitleOrSlug(value) {
+  const lookup = String(value || "").trim().toLowerCase();
+  return state.data?.pages.find((page) => page.title.toLowerCase() === lookup || page.slug === lookup);
+}
+
+function openWikiLink(pageId) {
+  const page = state.data?.pages.find((entry) => entry.id === pageId);
+  if (!page) return;
+  const scope = getSectionScope(page.category);
+  state.activeSection = page.category;
+  activateTab(scope === "dm" ? "dm" : "wiki");
+  renderSectionNav();
+  renderPages();
+  requestAnimationFrame(() => document.getElementById(`page-${page.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+}
+
+function relationLabel(value) {
+  return {
+    related: "Bezug",
+    lives_in: "lebt in",
+    located_in: "liegt in",
+    involves: "betrifft",
+    owns: "besitzt",
+    held_by: "getragen von",
+    ally_of: "verbündet mit",
+    enemy_of: "verfeindet mit",
+    parent_of: "übergeordnet",
+    child_of: "untergeordnet",
+  }[value] || value.replaceAll("_", " ");
 }
 
 function updatePreview() {
