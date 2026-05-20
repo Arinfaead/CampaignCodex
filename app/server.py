@@ -27,9 +27,6 @@ DATABASE_URL = os.environ.get(
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8080").rstrip("/")
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "14"))
-BOOTSTRAP_ADMIN_EMAIL = os.environ.get("CAMPAIGN_CODEX_ADMIN_EMAIL", "admin@example.com")
-BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("CAMPAIGN_CODEX_ADMIN_PASSWORD", "change-this-admin-password")
-BOOTSTRAP_ADMIN_NAME = os.environ.get("CAMPAIGN_CODEX_ADMIN_NAME", "Campaign Admin")
 
 OIDC_ISSUER = os.environ.get("OIDC_ISSUER", "").rstrip("/")
 OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
@@ -122,7 +119,6 @@ def init_db() -> None:
             """
         )
         migrate_schema(db)
-        ensure_bootstrap_admin(db)
         has_campaigns = db.execute("SELECT COUNT(*) AS count FROM campaigns").fetchone()["count"]
         if not has_campaigns:
             seed_database(db)
@@ -240,52 +236,8 @@ def migrate_schema(db: psycopg.Connection) -> None:
     )
 
 
-def ensure_bootstrap_admin(db: psycopg.Connection) -> None:
-    has_admin = db.execute("SELECT COUNT(*) AS count FROM users WHERE global_role = 'admin'").fetchone()["count"]
-    if has_admin:
-        return
-    existing = db.execute("SELECT * FROM users WHERE lower(email) = lower(%s)", (BOOTSTRAP_ADMIN_EMAIL,)).fetchone()
-    if existing:
-        db.execute(
-            "UPDATE users SET global_role = 'admin', password_hash = COALESCE(password_hash, %s) WHERE id = %s",
-            (hash_password(BOOTSTRAP_ADMIN_PASSWORD), existing["id"]),
-        )
-        return
-    db.execute(
-        """
-        INSERT INTO users (display_name, role, email, password_hash, global_role, auth_provider, created_at)
-        VALUES (%s, 'dm', %s, %s, 'admin', 'local', %s)
-        """,
-        (BOOTSTRAP_ADMIN_NAME, BOOTSTRAP_ADMIN_EMAIL, hash_password(BOOTSTRAP_ADMIN_PASSWORD), now()),
-    )
-
-
 def seed_database(db: psycopg.Connection) -> None:
     timestamp = now()
-    mira_id = db.execute(
-        """
-        INSERT INTO users (display_name, role, email, password_hash, global_role, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        ("Mira", "dm", "mira@example.com", hash_password("mira-demo"), "dm", timestamp),
-    ).fetchone()["id"]
-    jonas_id = db.execute(
-        """
-        INSERT INTO users (display_name, role, email, password_hash, global_role, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        ("Jonas", "player", "jonas@example.com", hash_password("jonas-demo"), "player", timestamp),
-    ).fetchone()["id"]
-    lea_id = db.execute(
-        """
-        INSERT INTO users (display_name, role, email, password_hash, global_role, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        ("Lea", "player", "lea@example.com", hash_password("lea-demo"), "player", timestamp),
-    ).fetchone()["id"]
     campaign_id = db.execute(
         "INSERT INTO campaigns (name, system, description, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
         (
@@ -295,78 +247,6 @@ def seed_database(db: psycopg.Connection) -> None:
             timestamp,
         ),
     ).fetchone()["id"]
-
-    with db.cursor() as cursor:
-        cursor.executemany(
-            "INSERT INTO memberships (user_id, campaign_id, role) VALUES (%s, %s, %s)",
-            [(mira_id, campaign_id, "dm"), (jonas_id, campaign_id, "player"), (lea_id, campaign_id, "player")],
-        )
-        cursor.executemany(
-            """
-            INSERT INTO pages (campaign_id, owner_id, title, category, template_key, summary, visibility, body, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            [
-                (
-                    campaign_id,
-                    mira_id,
-                    "Karte der Grenzlande",
-                    "overview",
-                    "generic",
-                    "Die wichtigsten Regionen und Konflikte der Kampagne.",
-                    "players",
-                    "# Grenzlande\n\nDie Grenzlande bestehen aus drei Fürstentümern, einem Nebelwald und den Ruinen von Kar Amon.",
-                    timestamp,
-                ),
-                (
-                    campaign_id,
-                    mira_id,
-                    "Dornwacht",
-                    "locations",
-                    "location",
-                    "Eine befestigte Grenzstadt am Rand des Nebelwaldes.",
-                    "players",
-                    "# Dornwacht\n\n## Atmosphäre\nNasse Steinmauern, Krähen auf den Dächern und nervöse Wachen.\n\n## Wichtige Orte\n- Alter Turm\n- Bürgermeisterhaus\n- Gasthaus Zur Silbernen Laterne",
-                    timestamp,
-                ),
-                (
-                    campaign_id,
-                    mira_id,
-                    "Arveth, Hofmagier",
-                    "characters",
-                    "character",
-                    "Ein höflicher Hofmagier mit zu vielen Antworten.",
-                    "players",
-                    "# Arveth\n\n## Rolle in der Welt\nBerater des Fürstenhauses.\n\n## Was die Spieler wissen\nArveth kennt sich mit Portalen aus.",
-                    timestamp,
-                ),
-                (
-                    campaign_id,
-                    mira_id,
-                    "Geheimer Antagonist",
-                    "dm_notes",
-                    "dm_secret",
-                    "Arveth arbeitet im Verborgenen gegen die Gruppe.",
-                    "dm",
-                    "# Geheimer Antagonist\n\nDer Hofmagier Arveth sammelt Splitter der Krone und lenkt mehrere Fraktionen gegeneinander.",
-                    timestamp,
-                ),
-            ],
-        )
-
-    db.execute(
-        """
-        INSERT INTO session_notes (campaign_id, user_id, title, body, updated_at)
-        VALUES (%s, %s, %s, %s, %s)
-        """,
-        (
-            campaign_id,
-            jonas_id,
-            "Session 1: Ankunft in Dornwacht",
-            "# Session 1\n\nWir haben den Bürgermeister getroffen und eine Karte erhalten.",
-            timestamp,
-        ),
-    )
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -463,7 +343,7 @@ class Handler(SimpleHTTPRequestHandler):
         with connect() as db:
             if path == "/api/auth/session":
                 user = self.current_user(db)
-                self.send_json({"user": public_user(user), "oauth_enabled": oauth_enabled()})
+                self.send_json({"user": public_user(user), "oauth_enabled": oauth_enabled(), "setup_required": setup_required(db)})
                 return
 
             if path == "/api/auth/oauth/start":
@@ -548,6 +428,9 @@ class Handler(SimpleHTTPRequestHandler):
         timestamp = now()
         with connect() as db:
             if path == "/api/auth/login":
+                if setup_required(db):
+                    self.send_json_error("Initial setup is required.", HTTPStatus.FORBIDDEN)
+                    return
                 email = clean(payload.get("email")).lower()
                 user = db.execute("SELECT * FROM users WHERE lower(email) = lower(%s)", (email,)).fetchone()
                 if not user or not verify_password(clean(payload.get("password")), user.get("password_hash")):
@@ -557,7 +440,10 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_auth_json(token, {"user": public_user(user)})
                 return
 
-            if path == "/api/auth/register":
+            if path == "/api/setup":
+                if not setup_required(db):
+                    self.send_json_error("Setup has already been completed.", HTTPStatus.CONFLICT)
+                    return
                 display_name = clean(payload.get("display_name"))
                 email = clean(payload.get("email")).lower()
                 password = clean(payload.get("password"))
@@ -570,13 +456,17 @@ class Handler(SimpleHTTPRequestHandler):
                 user = db.execute(
                     """
                     INSERT INTO users (display_name, role, email, password_hash, global_role, auth_provider, created_at)
-                    VALUES (%s, 'player', %s, %s, 'player', 'local', %s)
+                    VALUES (%s, 'dm', %s, %s, 'admin', 'local', %s)
                     RETURNING *
                     """,
                     (display_name, email, hash_password(password), timestamp),
                 ).fetchone()
                 token = create_session(db, user["id"])
                 self.send_auth_json(token, {"user": public_user(user)})
+                return
+
+            if path == "/api/auth/register":
+                self.send_json_error("Self registration is disabled. Ask an admin or use an invite.", HTTPStatus.FORBIDDEN)
                 return
 
             user = self.current_user(db)
@@ -877,7 +767,22 @@ class Handler(SimpleHTTPRequestHandler):
                     (campaign_id,),
                 )
             ]
-            users = [public_user(row) for row in db.execute("SELECT * FROM users ORDER BY display_name")]
+            if user["global_role"] == "admin":
+                users = [public_user(row) for row in db.execute("SELECT * FROM users ORDER BY display_name")]
+            else:
+                users = [
+                    public_user(row)
+                    for row in db.execute(
+                        """
+                        SELECT users.*
+                        FROM users
+                        JOIN memberships ON memberships.user_id = users.id
+                        WHERE memberships.campaign_id = %s
+                        ORDER BY users.display_name
+                        """,
+                        (campaign_id,),
+                    )
+                ]
             category_permissions = [
                 row_to_dict(row)
                 for row in db.execute(
@@ -1049,7 +954,7 @@ def can_access_campaign(user: dict, membership: dict | None) -> bool:
 
 
 def can_manage_campaign(user: dict, membership: dict | None) -> bool:
-    return user["global_role"] == "admin" or (membership and membership["role"] == "dm")
+    return user["global_role"] == "admin" or bool(membership and membership["role"] == "dm")
 
 
 def can_edit_page(user: dict, membership: dict | None, page: dict) -> bool:
@@ -1142,6 +1047,10 @@ def create_local_user(db: psycopg.Connection, payload: dict) -> dict:
         """,
         (display_name, role, email, hash_password(password), global_role, now()),
     ).fetchone()
+
+
+def setup_required(db: psycopg.Connection) -> bool:
+    return db.execute("SELECT COUNT(*) AS count FROM users WHERE global_role = 'admin'").fetchone()["count"] == 0
 
 
 def invite_by_token(db: psycopg.Connection, token: str) -> dict | None:

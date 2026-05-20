@@ -27,9 +27,6 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-campaign_codex}:${POSTGRES_PASSWORD:-campaign_codex}@postgres:5432/${POSTGRES_DB:-campaign_codex}
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:${APP_PORT:-8080}}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
-      - CAMPAIGN_CODEX_ADMIN_EMAIL=${CAMPAIGN_CODEX_ADMIN_EMAIL:-admin@example.com}
-      - CAMPAIGN_CODEX_ADMIN_PASSWORD=${CAMPAIGN_CODEX_ADMIN_PASSWORD:-change-this-admin-password}
-      - CAMPAIGN_CODEX_ADMIN_NAME=${CAMPAIGN_CODEX_ADMIN_NAME:-Campaign Admin}
       - OIDC_ISSUER=${OIDC_ISSUER:-}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}

@@ -29,7 +29,13 @@ docker compose up -d
 
 Danach ist die App unter <http://localhost:8080> erreichbar.
 
-## Port und Passwort anpassen
+## Erste Einrichtung
+
+Beim allerersten Start zeigt CampaignCodex eine Einrichtungsseite. Dort erstellst du den ersten Admin-Account direkt in der Weboberfläche. Es müssen keine Benutzer oder Passwörter in der `.env` hinterlegt werden.
+
+Danach ist die freie Registrierung deaktiviert. Neue Benutzer werden von Admins lokal angelegt, per OAuth angemeldet oder über Einladungslinks in Kampagnen aufgenommen.
+
+## Port und Einstellungen anpassen
 
 Die Compose-Datei hat sinnvolle Defaults. Optional kannst du eine `.env` anlegen:
 
@@ -48,10 +54,6 @@ COOKIE_SECURE=false
 POSTGRES_DB=campaign_codex
 POSTGRES_USER=campaign_codex
 POSTGRES_PASSWORD=change-this-password
-
-CAMPAIGN_CODEX_ADMIN_EMAIL=admin@example.com
-CAMPAIGN_CODEX_ADMIN_PASSWORD=change-this-admin-password
-CAMPAIGN_CODEX_ADMIN_NAME=Campaign Admin
 ```
 
 Wenn `APP_PORT=3000` gesetzt ist, ist die App unter <http://localhost:3000> erreichbar.
@@ -60,21 +62,13 @@ Die PostgreSQL-Datenbank liegt im Docker-Volume `campaign-codex-postgres`.
 
 ## Lokale Userverwaltung
 
-Beim ersten Start legt CampaignCodex einen lokalen Admin-Account aus den folgenden Variablen an:
-
-```env
-CAMPAIGN_CODEX_ADMIN_EMAIL=admin@example.com
-CAMPAIGN_CODEX_ADMIN_PASSWORD=change-this-admin-password
-CAMPAIGN_CODEX_ADMIN_NAME=Campaign Admin
-```
-
-Setze diese Werte vor dem ersten Start in deiner `.env`. Danach kannst du dich mit diesem Account anmelden und in den Einstellungen weitere lokale User erstellen.
+Der erste Admin wird über die Einrichtungsseite erstellt. Danach können Admins in den Einstellungen weitere lokale User erstellen. Eine öffentliche Selbstregistrierung gibt es nicht.
 
 Rollen:
 
-- `Admin`: darf User erstellen, Kampagnen importieren/exportieren und alle Kampagnen verwalten.
+- `Admin`: darf User erstellen, Kampagnen importieren/exportieren und alle Kampagnen sowie Inhalte systemweit einsehen und verwalten.
 - `DM`: darf eigene Kampagnen verwalten, Einladungen erstellen, Mitglieder hinzufügen und DM-Bereiche sehen.
-- `Spieler`: darf Kampagnen sehen, in denen er Mitglied ist, eigene Seiten/Notizen erstellen und Sichtbarkeit für eigene Seiten einschränken.
+- `Spieler`: darf nur Kampagnen sehen, in denen er Mitglied ist, eigene Seiten/Notizen erstellen und Sichtbarkeit für eigene Seiten einschränken.
 
 ## OAuth2/OIDC mit Authentik
 
@@ -155,6 +149,7 @@ Wiki-Seiten unterstützen mehrere Sichtbarkeiten:
 - `Nur DMs`: nur DMs und Admins können lesen.
 
 Spieler können eigene Seiten erstellen und deren Sichtbarkeit einschränken. DMs und Admins können alle Seiten der Kampagne verwalten.
+Admins können unabhängig von Kampagnenmitgliedschaften alle Kampagnen und Inhalte einsehen. DMs und Spieler sehen nur Kampagnen, in denen sie Mitglied sind.
 
 ## Markdown, Anhänge und Suche
 

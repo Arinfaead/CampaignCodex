@@ -53,6 +53,9 @@ async function init() {
   renderStaticOptions();
   const session = await api("/api/auth/session");
   $("oauthLogin").classList.toggle("hidden", !session.oauth_enabled);
+  $("loginForm").classList.toggle("hidden", session.setup_required);
+  $("setupForm").classList.toggle("hidden", !session.setup_required);
+  $("authInfo").classList.toggle("hidden", session.setup_required);
   if (!session.user) {
     showAuth();
     return;
@@ -351,11 +354,11 @@ async function login(event) {
   await bootstrap();
 }
 
-async function register(event) {
+async function setup(event) {
   event.preventDefault();
-  const result = await api("/api/auth/register", {
+  const result = await api("/api/setup", {
     method: "POST",
-    body: JSON.stringify({ display_name: $("registerName").value, email: $("registerEmail").value, password: $("registerPassword").value }),
+    body: JSON.stringify({ display_name: $("setupName").value, email: $("setupEmail").value, password: $("setupPassword").value }),
   });
   state.user = result.user;
   await bootstrap();
@@ -501,7 +504,7 @@ function formatDate(value) {
 }
 
 $("loginForm").addEventListener("submit", login);
-$("registerForm").addEventListener("submit", register);
+$("setupForm").addEventListener("submit", setup);
 $("logoutButton").addEventListener("click", logout);
 $("campaignSelect").addEventListener("change", async (event) => { state.campaignId = Number(event.target.value); await loadCampaign(); });
 $("newPageButton").addEventListener("click", openTemplatePicker);
