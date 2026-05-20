@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CampaignCodex</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="sidebar">
+        <div>
+          <p class="eyebrow">CampaignCodex</p>
+          <h1>D&D Kampagnen-Wiki</h1>
+        </div>
+
+        <label>
+          Kampagne
+          <select id="campaignSelect"></select>
+        </label>
+        <label>
+          Ansicht als
+          <select id="userSelect"></select>
+        </label>
+
+        <button id="newCampaignButton" class="secondary">Neue Kampagne</button>
+
+        <section>
+          <h2>Abschnitte</h2>
+          <div id="sectionNav" class="section-nav"></div>
+        </section>
+
+        <section class="members">
+          <div class="section-heading">
+            <h2>Mitglieder</h2>
+            <button id="addMemberButton" class="icon-button" title="Mitglied hinzufügen">+</button>
+          </div>
+          <div id="members"></div>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="campaign-header">
+          <div>
+            <p id="system" class="eyebrow"></p>
+            <h2 id="campaignName"></h2>
+            <p id="campaignDescription"></p>
+          </div>
+          <div class="actions">
+            <button id="newPageButton">Wiki-Seite</button>
+            <button id="newNoteButton">Session-Notiz</button>
+          </div>
+        </header>
+
+        <nav class="tabs" aria-label="Bereiche">
+          <button class="tab active" data-tab="wiki">Wiki</button>
+          <button id="dmTab" class="tab" data-tab="dm">DM-Bereich</button>
+          <button class="tab" data-tab="notes">Notizen</button>
+        </nav>
+
+        <section id="wikiView" class="panel active">
+          <div id="pages" class="grid"></div>
+        </section>
+
+        <section id="dmView" class="panel">
+          <div id="dmPages" class="grid"></div>
+        </section>
+
+        <section id="notesView" class="panel">
+          <div id="notes" class="grid"></div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="editor">
+      <form method="dialog" class="editor">
+        <input type="hidden" id="editorType">
+        <input type="hidden" id="editorId">
+        <h2 id="editorTitle">Eintrag bearbeiten</h2>
+        <label>
+          Titel
+          <input id="titleInput" required>
+        </label>
+        <label id="summaryLabel">
+          Kurzbeschreibung
+          <input id="summaryInput">
+        </label>
+        <div id="pageOptions" class="option-row">
+          <label>
+            Template
+            <select id="templateInput"></select>
+          </label>
+          <label>
+            Abschnitt
+            <select id="categoryInput"></select>
+          </label>
+          <label>
+            Sichtbarkeit
+            <select id="visibilityInput">
+              <option value="players">Spieler sichtbar</option>
+              <option value="dm">Nur DM</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Inhalt
+          <textarea id="bodyInput" rows="12"></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button value="cancel" class="secondary">Abbrechen</button>
+          <button id="saveButton" value="default">Speichern</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="templateDialog">
+      <form method="dialog" class="editor">
+        <h2>Template wählen</h2>
+        <div id="templateGrid" class="template-grid"></div>
+        <div class="dialog-actions">
+          <button value="cancel" class="secondary">Abbrechen</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="campaignDialog">
+      <form method="dialog" class="editor">
+        <h2>Neue Kampagne</h2>
+        <label>
+          Name
+          <input id="newCampaignName" required>
+        </label>
+        <label>
+          System
+          <input id="newCampaignSystem" value="D&D 5e">
+        </label>
+        <label>
+          DM-Name
+          <input id="newDmName" value="Dungeon Master">
+        </label>
+        <label>
+          Beschreibung
+          <textarea id="newCampaignDescription" rows="5"></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button value="cancel" class="secondary">Abbrechen</button>
+          <button id="createCampaignButton" value="default">Erstellen</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="memberDialog">
+      <form method="dialog" class="editor">
+        <h2>Mitglied hinzufügen</h2>
+        <label>
+          Name
+          <input id="memberNameInput" required>
+        </label>
+        <label>
+          Rolle
+          <select id="memberRoleInput">
+            <option value="player">Spieler</option>
+            <option value="dm">DM</option>
+          </select>
+        </label>
+        <div class="dialog-actions">
+          <button value="cancel" class="secondary">Abbrechen</button>
+          <button id="saveMemberButton" value="default">Hinzufügen</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
