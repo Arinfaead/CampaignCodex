@@ -11,6 +11,4 @@ COPY static ./static
 ENV PORT=8080
 EXPOSE 8080
 
-VOLUME ["/app/data"]
-
 CMD ["python", "app/server.py"]

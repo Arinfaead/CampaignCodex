@@ -1,6 +1,6 @@
 # CampaignCodex
 
-CampaignCodex ist ein kleines Open-Source-MVP für D&D Dungeon Master und Spielergruppen. Es bietet ein webbares Kampagnen-Wiki mit mehreren Kampagnen, DM-sichtbaren Bereichen und persönlichen Session-Notizen für Spieler.
+CampaignCodex ist ein kleines Open-Source-MVP für D&D Dungeon Master und Spielergruppen. Es bietet ein webbasiertes Kampagnen-Wiki mit mehreren Kampagnen, DM-sichtbaren Bereichen und persönlichen Session-Notizen für Spieler.
 
 ## Funktionen
 
@@ -11,29 +11,49 @@ CampaignCodex ist ein kleines Open-Source-MVP für D&D Dungeon Master und Spiele
 - Vorgefertigte Artikel-Templates für typische Worldbuilding-Einträge
 - Session-Notizen pro Spieler
 - PostgreSQL-Persistenz
-- Docker- und Docker-Compose-Setup mit App- und Datenbankcontainer
+- Docker-Compose-Setup mit fertigem App-Image und PostgreSQL-Datenbank
 
-## Lokal starten
+## Starten
 
-Setze zuerst eine PostgreSQL-Datenbank auf und stelle `DATABASE_URL` bereit:
+Du brauchst nur Docker und Docker Compose. Python muss auf dem Server nicht installiert sein.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-export DATABASE_URL=postgresql://campaign_codex:campaign_codex@localhost:5432/campaign_codex
-python3 app/server.py
+docker compose up -d
 ```
 
 Danach ist die App unter <http://localhost:8080> erreichbar.
 
-## Mit Docker starten
+## Port und Passwort anpassen
+
+Die Compose-Datei hat sinnvolle Defaults. Optional kannst du eine `.env` anlegen:
 
 ```bash
-docker compose up --build
+cp .env.example .env
 ```
 
-Die Datenbank liegt im Docker-Volume `campaign-codex-postgres`.
+Wichtige Variablen:
+
+```env
+APP_PORT=8080
+CAMPAIGN_CODEX_IMAGE=ghcr.io/arinfaead/campaigncodex:latest
+POSTGRES_DB=campaign_codex
+POSTGRES_USER=campaign_codex
+POSTGRES_PASSWORD=change-this-password
+```
+
+Wenn `APP_PORT=3000` gesetzt ist, ist die App unter <http://localhost:3000> erreichbar.
+
+Die PostgreSQL-Datenbank liegt im Docker-Volume `campaign-codex-postgres`.
+
+## Image
+
+Das App-Image wird automatisch über GitHub Actions gebaut und in der GitHub Container Registry veröffentlicht:
+
+```text
+ghcr.io/arinfaead/campaigncodex:latest
+```
+
+Für normale Installation reicht die [docker-compose.yml](docker-compose.yml). Der Quellcode und das `Dockerfile` werden nur benötigt, wenn du selbst ein Image bauen oder entwickeln möchtest.
 
 ## Projektstruktur
 
@@ -45,6 +65,7 @@ static/app.js       Frontend-Logik
 Dockerfile          Container-Image
 docker-compose.yml  Server-Deployment
 requirements.txt    Python-Abhängigkeiten
+.github/workflows   Automatischer Image-Build für GHCR
 ```
 
 ## Nächste sinnvolle Ausbaustufen
