@@ -10,8 +10,8 @@
     <main id="authView" class="auth-shell">
       <section class="auth-panel">
         <p class="eyebrow">CampaignCodex</p>
-        <h1>CampaignCodex</h1>
-        <p class="muted">Melde dich lokal an oder nutze OAuth2/OIDC, wenn es auf dem Server eingerichtet ist.</p>
+        <h1 id="authTitle">CampaignCodex</h1>
+        <p id="authIntro" class="muted">Melde dich lokal an oder nutze OAuth2/OIDC, wenn es auf dem Server eingerichtet ist.</p>
 
         <div class="auth-grid">
           <form id="loginForm" class="stack">
@@ -30,7 +30,7 @@
 
           <form id="setupForm" class="stack hidden">
             <h2>Instanz einrichten</h2>
-            <p class="muted">Erstelle den ersten Admin-Account. Danach ist die freie Registrierung deaktiviert.</p>
+            <p class="muted">Erstelle den lokalen Admin-Account für diese CampaignCodex-Instanz.</p>
             <label>
               Admin-Name
               <input id="setupName" autocomplete="name" required>
@@ -43,13 +43,25 @@
               Passwort
               <input id="setupPassword" type="password" autocomplete="new-password" minlength="8" required>
             </label>
+            <fieldset class="setup-choice">
+              <legend>Startinhalt</legend>
+              <label class="choice-card">
+                <input type="radio" name="sampleCampaign" value="yes" checked>
+                <span>
+                  <strong>Mit Beispielkampagne starten</strong>
+                  <small>Legt „Die Splitterkrone“ als erste Kampagne an.</small>
+                </span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="sampleCampaign" value="no">
+                <span>
+                  <strong>Ohne Beispielkampagne starten</strong>
+                  <small>Startet leer, damit du direkt deine eigene Kampagne erstellst.</small>
+                </span>
+              </label>
+            </fieldset>
             <button class="secondary">Admin erstellen</button>
           </form>
-
-          <section id="authInfo" class="stack auth-info">
-            <h2>Kein offenes Register</h2>
-            <p>Neue Spieler kommen über Einladungslinks oder werden von Admins lokal angelegt. So bleibt jede Kampagne sauber auf ihre Gruppe begrenzt.</p>
-          </section>
         </div>
       </section>
     </main>

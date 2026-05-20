@@ -100,6 +100,15 @@ button.secondary {
   margin-top: 24px;
 }
 
+.setup-mode .auth-grid {
+  grid-template-columns: minmax(0, 520px);
+  justify-content: center;
+}
+
+.setup-mode .auth-panel {
+  width: min(680px, 100%);
+}
+
 .stack {
   display: grid;
   gap: 14px;
@@ -175,6 +184,49 @@ textarea {
   padding: 11px 12px;
   color: var(--ink);
   background: white;
+}
+
+.setup-choice {
+  display: grid;
+  gap: 10px;
+  margin: 2px 0 0;
+  border: 0;
+  padding: 0;
+}
+
+.setup-choice legend {
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.choice-card {
+  display: flex;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--ink);
+  background: white;
+}
+
+.choice-card input {
+  width: auto;
+  margin-top: 3px;
+}
+
+.choice-card strong,
+.choice-card small {
+  display: block;
+}
+
+.choice-card small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .sidebar label,

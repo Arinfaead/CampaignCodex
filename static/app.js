@@ -52,10 +52,7 @@ async function api(path, options = {}) {
 async function init() {
   renderStaticOptions();
   const session = await api("/api/auth/session");
-  $("oauthLogin").classList.toggle("hidden", !session.oauth_enabled);
-  $("loginForm").classList.toggle("hidden", session.setup_required);
-  $("setupForm").classList.toggle("hidden", !session.setup_required);
-  $("authInfo").classList.toggle("hidden", session.setup_required);
+  renderAuthMode(session);
   if (!session.user) {
     showAuth();
     return;
@@ -80,6 +77,17 @@ function showAuth() {
   $("appView").classList.add("hidden");
 }
 
+function renderAuthMode(session) {
+  $("authView").classList.toggle("setup-mode", session.setup_required);
+  $("authTitle").textContent = session.setup_required ? "CampaignCodex einrichten" : "CampaignCodex";
+  $("authIntro").textContent = session.setup_required
+    ? "Lege beim ersten Start den lokalen Admin-Account an. Danach kannst du Kampagnen, Benutzer und Einladungen verwalten."
+    : "Melde dich lokal an oder nutze OAuth2/OIDC, wenn es auf dem Server eingerichtet ist.";
+  $("oauthLogin").classList.toggle("hidden", !session.oauth_enabled || session.setup_required);
+  $("loginForm").classList.toggle("hidden", session.setup_required);
+  $("setupForm").classList.toggle("hidden", !session.setup_required);
+}
+
 function showApp() {
   $("authView").classList.add("hidden");
   $("appView").classList.remove("hidden");
@@ -98,7 +106,21 @@ function renderSelectors() {
 
 async function loadCampaign() {
   if (!state.campaignId) {
+    state.data = null;
+    $("system").textContent = "";
     $("campaignName").textContent = "Keine Kampagne";
+    $("campaignDescription").textContent = "Erstelle eine neue Kampagne, um dein Wiki zu starten.";
+    $("newPageButton").style.display = "none";
+    $("newNoteButton").style.display = "none";
+    $("addMemberButton").style.display = "none";
+    $("dmTab").style.display = "none";
+    $("members").innerHTML = "";
+    $("sectionNav").innerHTML = "";
+    $("pages").innerHTML = `<div class="empty">Noch keine Kampagne vorhanden.</div>`;
+    $("dmPages").innerHTML = "";
+    $("notes").innerHTML = "";
+    $("searchResults").innerHTML = "";
+    document.querySelector('[data-tab="settings"]').style.display = "none";
     return;
   }
   state.data = await api(`/api/campaign?campaign_id=${state.campaignId}`);
@@ -356,9 +378,15 @@ async function login(event) {
 
 async function setup(event) {
   event.preventDefault();
+  const createSampleCampaign = document.querySelector('input[name="sampleCampaign"]:checked')?.value !== "no";
   const result = await api("/api/setup", {
     method: "POST",
-    body: JSON.stringify({ display_name: $("setupName").value, email: $("setupEmail").value, password: $("setupPassword").value }),
+    body: JSON.stringify({
+      display_name: $("setupName").value,
+      email: $("setupEmail").value,
+      password: $("setupPassword").value,
+      create_sample_campaign: createSampleCampaign,
+    }),
   });
   state.user = result.user;
   await bootstrap();

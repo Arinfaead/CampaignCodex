@@ -119,9 +119,6 @@ def init_db() -> None:
             """
         )
         migrate_schema(db)
-        has_campaigns = db.execute("SELECT COUNT(*) AS count FROM campaigns").fetchone()["count"]
-        if not has_campaigns:
-            seed_database(db)
 
 
 def migrate_schema(db: psycopg.Connection) -> None:
@@ -236,7 +233,7 @@ def migrate_schema(db: psycopg.Connection) -> None:
     )
 
 
-def seed_database(db: psycopg.Connection) -> None:
+def seed_database(db: psycopg.Connection, owner_user_id: int | None = None) -> int:
     timestamp = now()
     campaign_id = db.execute(
         "INSERT INTO campaigns (name, system, description, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
@@ -247,6 +244,12 @@ def seed_database(db: psycopg.Connection) -> None:
             timestamp,
         ),
     ).fetchone()["id"]
+    if owner_user_id:
+        db.execute(
+            "INSERT INTO memberships (user_id, campaign_id, role) VALUES (%s, %s, 'dm') ON CONFLICT DO NOTHING",
+            (owner_user_id, campaign_id),
+        )
+    return campaign_id
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -461,6 +464,8 @@ class Handler(SimpleHTTPRequestHandler):
                     """,
                     (display_name, email, hash_password(password), timestamp),
                 ).fetchone()
+                if payload.get("create_sample_campaign", True) is not False:
+                    seed_database(db, user["id"])
                 token = create_session(db, user["id"])
                 self.send_auth_json(token, {"user": public_user(user)})
                 return

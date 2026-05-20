@@ -31,7 +31,7 @@ Danach ist die App unter <http://localhost:8080> erreichbar.
 
 ## Erste Einrichtung
 
-Beim allerersten Start zeigt CampaignCodex eine Einrichtungsseite. Dort erstellst du den ersten Admin-Account direkt in der Weboberfläche. Es müssen keine Benutzer oder Passwörter in der `.env` hinterlegt werden.
+Beim allerersten Start zeigt CampaignCodex eine Einrichtungsseite. Dort erstellst du den ersten Admin-Account direkt in der Weboberfläche und entscheidest, ob CampaignCodex mit der Beispielkampagne „Die Splitterkrone“ oder ohne Beispielkampagne starten soll. Es müssen keine Benutzer oder Passwörter in der `.env` hinterlegt werden.
 
 Danach ist die freie Registrierung deaktiviert. Neue Benutzer werden von Admins lokal angelegt, per OAuth angemeldet oder über Einladungslinks in Kampagnen aufgenommen.
 
