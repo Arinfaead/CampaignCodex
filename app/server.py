@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import os
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 import psycopg
 from psycopg.rows import dict_row
@@ -18,6 +24,19 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql://campaign_codex:campaign_codex@localhost:5432/campaign_codex",
 )
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8080").rstrip("/")
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "14"))
+BOOTSTRAP_ADMIN_EMAIL = os.environ.get("CAMPAIGN_CODEX_ADMIN_EMAIL", "admin@example.com")
+BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("CAMPAIGN_CODEX_ADMIN_PASSWORD", "change-this-admin-password")
+BOOTSTRAP_ADMIN_NAME = os.environ.get("CAMPAIGN_CODEX_ADMIN_NAME", "Campaign Admin")
+
+OIDC_ISSUER = os.environ.get("OIDC_ISSUER", "").rstrip("/")
+OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
+OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
+OIDC_REDIRECT_URI = os.environ.get("OIDC_REDIRECT_URI", f"{PUBLIC_URL}/api/auth/oauth/callback")
+OIDC_ADMIN_GROUP = os.environ.get("OIDC_ADMIN_GROUP", "CampaignCodex Admins")
+OIDC_DM_GROUP = os.environ.get("OIDC_DM_GROUP", "CampaignCodex DMs")
 
 PAGE_CATEGORIES = (
     "overview",
@@ -32,19 +51,26 @@ PAGE_CATEGORIES = (
     "player_dossiers",
     "dm_notes",
 )
-PAGE_VISIBILITIES = ("dm", "players")
+DM_ONLY_CATEGORIES = ("player_dossiers", "dm_notes")
+PAGE_VISIBILITIES = ("players", "dm", "restricted", "private")
+MEMBERSHIP_ROLES = ("dm", "player")
+GLOBAL_ROLES = ("admin", "dm", "player")
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def future(days: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(timespec="seconds")
+
+
 def connect() -> psycopg.Connection:
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
-def row_to_dict(row: dict) -> dict:
-    return dict(row)
+def row_to_dict(row: dict | None) -> dict | None:
+    return dict(row) if row else None
 
 
 def init_db() -> None:
@@ -95,26 +121,170 @@ def init_db() -> None:
             );
             """
         )
+        migrate_schema(db)
+        ensure_bootstrap_admin(db)
         has_campaigns = db.execute("SELECT COUNT(*) AS count FROM campaigns").fetchone()["count"]
-        if has_campaigns:
-            return
+        if not has_campaigns:
+            seed_database(db)
 
-        seed_database(db)
+
+def migrate_schema(db: psycopg.Connection) -> None:
+    statements = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS global_role TEXT NOT NULL DEFAULT 'player'",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'local'",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_subject TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TEXT",
+        "ALTER TABLE pages ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "ALTER TABLE session_notes ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private'",
+    ]
+    for statement in statements:
+        db.execute(statement)
+
+    db.execute("ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_visibility_check")
+    db.execute(f"ALTER TABLE pages ADD CONSTRAINT pages_visibility_check CHECK(visibility IN {sql_tuple(PAGE_VISIBILITIES)})")
+    db.execute("ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_category_check")
+    db.execute(f"ALTER TABLE pages ADD CONSTRAINT pages_category_check CHECK(category IN {sql_tuple(PAGE_CATEGORIES)})")
+    db.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_global_role_check")
+    db.execute(f"ALTER TABLE users ADD CONSTRAINT users_global_role_check CHECK(global_role IN {sql_tuple(GLOBAL_ROLES)})")
+
+    db.execute("UPDATE users SET global_role = role WHERE global_role = 'player' AND role IN ('dm', 'player')")
+    db.execute(
+        """
+        UPDATE pages
+        SET owner_id = memberships.user_id
+        FROM memberships
+        WHERE pages.owner_id IS NULL
+          AND pages.campaign_id = memberships.campaign_id
+          AND memberships.role = 'dm'
+        """
+    )
+
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (lower(email)) WHERE email IS NOT NULL")
+    db.execute("CREATE INDEX IF NOT EXISTS pages_campaign_idx ON pages (campaign_id)")
+    db.execute("CREATE INDEX IF NOT EXISTS session_notes_campaign_idx ON session_notes (campaign_id)")
+
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS oauth_states (
+            state_hash TEXT PRIMARY KEY,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS campaign_invites (
+            id INTEGER PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY,
+            token_hash TEXT NOT NULL UNIQUE,
+            campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            invited_email TEXT,
+            role TEXT NOT NULL CHECK(role IN ('dm', 'player')),
+            created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expires_at TEXT NOT NULL,
+            accepted_at TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS page_permissions (
+            page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            can_read BOOLEAN NOT NULL DEFAULT true,
+            can_write BOOLEAN NOT NULL DEFAULT false,
+            PRIMARY KEY (page_id, user_id)
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS category_permissions (
+            campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            category TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('dm', 'player')),
+            can_read BOOLEAN NOT NULL DEFAULT true,
+            can_write BOOLEAN NOT NULL DEFAULT false,
+            PRIMARY KEY (campaign_id, category, role)
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS attachments (
+            id INTEGER PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY,
+            campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            page_id INTEGER REFERENCES pages(id) ON DELETE CASCADE,
+            note_id INTEGER REFERENCES session_notes(id) ON DELETE CASCADE,
+            uploaded_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            filename TEXT NOT NULL,
+            mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+            content BYTEA NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK (page_id IS NOT NULL OR note_id IS NOT NULL)
+        )
+        """
+    )
+
+
+def ensure_bootstrap_admin(db: psycopg.Connection) -> None:
+    has_admin = db.execute("SELECT COUNT(*) AS count FROM users WHERE global_role = 'admin'").fetchone()["count"]
+    if has_admin:
+        return
+    existing = db.execute("SELECT * FROM users WHERE lower(email) = lower(%s)", (BOOTSTRAP_ADMIN_EMAIL,)).fetchone()
+    if existing:
+        db.execute(
+            "UPDATE users SET global_role = 'admin', password_hash = COALESCE(password_hash, %s) WHERE id = %s",
+            (hash_password(BOOTSTRAP_ADMIN_PASSWORD), existing["id"]),
+        )
+        return
+    db.execute(
+        """
+        INSERT INTO users (display_name, role, email, password_hash, global_role, auth_provider, created_at)
+        VALUES (%s, 'dm', %s, %s, 'admin', 'local', %s)
+        """,
+        (BOOTSTRAP_ADMIN_NAME, BOOTSTRAP_ADMIN_EMAIL, hash_password(BOOTSTRAP_ADMIN_PASSWORD), now()),
+    )
 
 
 def seed_database(db: psycopg.Connection) -> None:
     timestamp = now()
     mira_id = db.execute(
-        "INSERT INTO users (display_name, role, created_at) VALUES (%s, %s, %s) RETURNING id",
-        ("Mira", "dm", timestamp),
+        """
+        INSERT INTO users (display_name, role, email, password_hash, global_role, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        ("Mira", "dm", "mira@example.com", hash_password("mira-demo"), "dm", timestamp),
     ).fetchone()["id"]
     jonas_id = db.execute(
-        "INSERT INTO users (display_name, role, created_at) VALUES (%s, %s, %s) RETURNING id",
-        ("Jonas", "player", timestamp),
+        """
+        INSERT INTO users (display_name, role, email, password_hash, global_role, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        ("Jonas", "player", "jonas@example.com", hash_password("jonas-demo"), "player", timestamp),
     ).fetchone()["id"]
     lea_id = db.execute(
-        "INSERT INTO users (display_name, role, created_at) VALUES (%s, %s, %s) RETURNING id",
-        ("Lea", "player", timestamp),
+        """
+        INSERT INTO users (display_name, role, email, password_hash, global_role, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        ("Lea", "player", "lea@example.com", hash_password("lea-demo"), "player", timestamp),
     ).fetchone()["id"]
     campaign_id = db.execute(
         "INSERT INTO campaigns (name, system, description, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
@@ -133,58 +303,52 @@ def seed_database(db: psycopg.Connection) -> None:
         )
         cursor.executemany(
             """
-            INSERT INTO pages (campaign_id, title, category, template_key, summary, visibility, body, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO pages (campaign_id, owner_id, title, category, template_key, summary, visibility, body, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             [
                 (
                     campaign_id,
+                    mira_id,
                     "Karte der Grenzlande",
                     "overview",
                     "generic",
                     "Die wichtigsten Regionen und Konflikte der Kampagne.",
                     "players",
-                    "Die Grenzlande bestehen aus drei Fürstentümern, einem Nebelwald und den Ruinen von Kar Amon.",
+                    "# Grenzlande\n\nDie Grenzlande bestehen aus drei Fürstentümern, einem Nebelwald und den Ruinen von Kar Amon.",
                     timestamp,
                 ),
                 (
                     campaign_id,
+                    mira_id,
                     "Dornwacht",
                     "locations",
                     "location",
                     "Eine befestigte Grenzstadt am Rand des Nebelwaldes.",
                     "players",
-                    "Kurzbeschreibung\nEine befestigte Grenzstadt am Rand des Nebelwaldes.\n\nAtmosphäre\nNasse Steinmauern, Krähen auf den Dächern und nervöse Wachen.\n\nWichtige Orte\n- Alter Turm\n- Bürgermeisterhaus\n- Gasthaus Zur Silbernen Laterne",
+                    "# Dornwacht\n\n## Atmosphäre\nNasse Steinmauern, Krähen auf den Dächern und nervöse Wachen.\n\n## Wichtige Orte\n- Alter Turm\n- Bürgermeisterhaus\n- Gasthaus Zur Silbernen Laterne",
                     timestamp,
                 ),
                 (
                     campaign_id,
+                    mira_id,
                     "Arveth, Hofmagier",
                     "characters",
                     "character",
                     "Ein höflicher Hofmagier mit zu vielen Antworten.",
                     "players",
-                    "Rolle in der Welt\nBerater des Fürstenhauses.\n\nAussehen und Auftreten\nRuhig, höflich, immer mit silbernem Gehstock.\n\nWas die Spieler wissen\nArveth kennt sich mit Portalen aus.",
+                    "# Arveth\n\n## Rolle in der Welt\nBerater des Fürstenhauses.\n\n## Was die Spieler wissen\nArveth kennt sich mit Portalen aus.",
                     timestamp,
                 ),
                 (
                     campaign_id,
+                    mira_id,
                     "Geheimer Antagonist",
                     "dm_notes",
                     "dm_secret",
                     "Arveth arbeitet im Verborgenen gegen die Gruppe.",
                     "dm",
-                    "Der Hofmagier Arveth sammelt Splitter der Krone und lenkt mehrere Fraktionen gegeneinander.",
-                    timestamp,
-                ),
-                (
-                    campaign_id,
-                    "Offene Quests",
-                    "plots",
-                    "plot",
-                    "Aktive Aufhänger und offene Kampagnenfäden.",
-                    "players",
-                    "- Finde die vermisste Kundschafterin.\n- Untersuche das blaue Feuer im alten Turm.",
+                    "# Geheimer Antagonist\n\nDer Hofmagier Arveth sammelt Splitter der Krone und lenkt mehrere Fraktionen gegeneinander.",
                     timestamp,
                 ),
             ],
@@ -199,7 +363,7 @@ def seed_database(db: psycopg.Connection) -> None:
             campaign_id,
             jonas_id,
             "Session 1: Ankunft in Dornwacht",
-            "Wir haben den Bürgermeister getroffen und eine Karte erhalten.",
+            "# Session 1\n\nWir haben den Bürgermeister getroffen und eine Karte erhalten.",
             timestamp,
         ),
     )
@@ -223,23 +387,20 @@ class Handler(SimpleHTTPRequestHandler):
         if not parsed.path.startswith("/api/"):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        payload = self.read_json()
-        self.handle_api_post(parsed.path, payload)
+        self.handle_api_post(parsed.path, self.read_json())
 
     def do_PUT(self) -> None:
         parsed = urlparse(self.path)
         if not parsed.path.startswith("/api/"):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        payload = self.read_json()
-        self.handle_api_put(parsed.path, payload)
+        self.handle_api_put(parsed.path, self.read_json())
 
     def read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
         if length == 0:
             return {}
-        raw = self.rfile.read(length).decode("utf-8")
-        return json.loads(raw)
+        return json.loads(self.rfile.read(length).decode("utf-8"))
 
     def send_json(self, data: object, status: HTTPStatus = HTTPStatus.OK) -> None:
         encoded = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -249,64 +410,136 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def send_json_error(self, message: str, status: HTTPStatus) -> None:
+        self.send_json({"error": message}, status)
+
+    def set_session_cookie(self, token: str) -> None:
+        secure = "; Secure" if COOKIE_SECURE else ""
+        self.send_header(
+            "Set-Cookie",
+            f"cc_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_DAYS * 86400}{secure}",
+        )
+
+    def clear_session_cookie(self) -> None:
+        self.send_header("Set-Cookie", "cc_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+
+    def send_auth_json(self, token: str, data: object) -> None:
+        encoded = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.set_session_cookie(token)
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def redirect(self, location: str) -> None:
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", location)
+        self.end_headers()
+
+    def current_user(self, db: psycopg.Connection) -> dict | None:
+        token = self.session_token()
+        if not token:
+            return None
+        token_hash = hash_token(token)
+        session = db.execute(
+            """
+            SELECT auth_sessions.*, users.*
+            FROM auth_sessions
+            JOIN users ON users.id = auth_sessions.user_id
+            WHERE auth_sessions.token_hash = %s AND auth_sessions.expires_at > %s
+            """,
+            (token_hash, now()),
+        ).fetchone()
+        return row_to_dict(session)
+
+    def session_token(self) -> str | None:
+        cookie = SimpleCookie(self.headers.get("Cookie"))
+        if "cc_session" not in cookie:
+            return None
+        return cookie["cc_session"].value
+
     def handle_api_get(self, path: str, query: dict[str, list[str]]) -> None:
         with connect() as db:
+            if path == "/api/auth/session":
+                user = self.current_user(db)
+                self.send_json({"user": public_user(user), "oauth_enabled": oauth_enabled()})
+                return
+
+            if path == "/api/auth/oauth/start":
+                if not oauth_enabled():
+                    self.send_json_error("OAuth is not configured.", HTTPStatus.BAD_REQUEST)
+                    return
+                state = secrets.token_urlsafe(32)
+                db.execute(
+                    "INSERT INTO oauth_states (state_hash, expires_at, created_at) VALUES (%s, %s, %s)",
+                    (hash_token(state), future(1), now()),
+                )
+                authorization_params = {
+                    'client_id': OIDC_CLIENT_ID,
+                    'redirect_uri': OIDC_REDIRECT_URI,
+                    'response_type': 'code',
+                    'scope': 'openid email profile groups',
+                    'state': state,
+                }
+                authorization_url = f"{OIDC_ISSUER}/application/o/authorize/?{urlencode(authorization_params)}"
+                self.redirect(authorization_url)
+                return
+
+            if path == "/api/auth/oauth/callback":
+                self.handle_oauth_callback(db, query)
+                return
+
+            user = self.current_user(db)
+            if not user:
+                self.send_json_error("Authentication required.", HTTPStatus.UNAUTHORIZED)
+                return
+
             if path == "/api/bootstrap":
-                campaigns = [row_to_dict(row) for row in db.execute("SELECT * FROM campaigns ORDER BY name")]
-                users = [row_to_dict(row) for row in db.execute("SELECT * FROM users ORDER BY display_name")]
-                self.send_json({"campaigns": campaigns, "users": users})
+                campaigns = [row_to_dict(row) for row in db.execute(visible_campaigns_query(user), visible_campaigns_params(user))]
+                self.send_json({"campaigns": campaigns, "user": public_user(user), "oauth_enabled": oauth_enabled()})
                 return
 
             if path == "/api/campaign":
                 campaign_id = self.required_int(query, "campaign_id")
-                user_id = self.required_int(query, "user_id")
-                membership = self.membership(db, campaign_id, user_id)
-                if not membership:
-                    self.send_json({"error": "User is not part of this campaign."}, HTTPStatus.FORBIDDEN)
+                membership = self.membership(db, campaign_id, user["id"])
+                if not can_access_campaign(user, membership):
+                    self.send_json_error("User is not part of this campaign.", HTTPStatus.FORBIDDEN)
                     return
+                self.send_json(self.campaign_payload(db, campaign_id, user, membership))
+                return
 
-                campaign = row_to_dict(
-                    db.execute("SELECT * FROM campaigns WHERE id = %s", (campaign_id,)).fetchone()
-                )
-                pages_query = """
-                    SELECT * FROM pages
-                    WHERE campaign_id = %s AND (%s = 'dm' OR visibility = 'players')
-                    ORDER BY category, title
-                """
-                pages = [row_to_dict(row) for row in db.execute(pages_query, (campaign_id, membership["role"]))]
-                notes_query = """
-                    SELECT session_notes.*, users.display_name AS author
-                    FROM session_notes
-                    JOIN users ON users.id = session_notes.user_id
-                    WHERE campaign_id = %s AND (%s = 'dm' OR user_id = %s)
-                    ORDER BY updated_at DESC
-                """
-                notes = [
-                    row_to_dict(row)
-                    for row in db.execute(notes_query, (campaign_id, membership["role"], user_id))
-                ]
-                members = [
-                    row_to_dict(row)
-                    for row in db.execute(
-                        """
-                        SELECT users.id, users.display_name, memberships.role
-                        FROM memberships
-                        JOIN users ON users.id = memberships.user_id
-                        WHERE campaign_id = %s
-                        ORDER BY memberships.role, users.display_name
-                        """,
-                        (campaign_id,),
-                    )
-                ]
-                self.send_json(
-                    {
-                        "campaign": campaign,
-                        "membership": row_to_dict(membership),
-                        "pages": pages,
-                        "notes": notes,
-                        "members": members,
-                    }
-                )
+            if path == "/api/search":
+                campaign_id = self.required_int(query, "campaign_id")
+                term = clean(query.get("q", [""])[0])
+                membership = self.membership(db, campaign_id, user["id"])
+                if not can_access_campaign(user, membership):
+                    self.send_json_error("User is not part of this campaign.", HTTPStatus.FORBIDDEN)
+                    return
+                self.send_json({"results": self.search(db, campaign_id, user, membership, term)})
+                return
+
+            if path == "/api/invite":
+                token = clean(query.get("token", [""])[0])
+                invite = invite_by_token(db, token)
+                if not invite:
+                    self.send_json_error("Invite not found or expired.", HTTPStatus.NOT_FOUND)
+                    return
+                self.send_json({"invite": invite})
+                return
+
+            if path.startswith("/api/attachments/") and path.endswith("/download"):
+                attachment_id = int(path.split("/")[3])
+                self.download_attachment(db, attachment_id, user)
+                return
+
+            if path.startswith("/api/campaigns/") and path.endswith("/export"):
+                campaign_id = int(path.split("/")[3])
+                membership = self.membership(db, campaign_id, user["id"])
+                if not can_manage_campaign(user, membership):
+                    self.send_json_error("Only admins and DMs can export campaigns.", HTTPStatus.FORBIDDEN)
+                    return
+                self.send_json(export_campaign(db, campaign_id))
                 return
 
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -314,10 +547,71 @@ class Handler(SimpleHTTPRequestHandler):
     def handle_api_post(self, path: str, payload: dict) -> None:
         timestamp = now()
         with connect() as db:
+            if path == "/api/auth/login":
+                email = clean(payload.get("email")).lower()
+                user = db.execute("SELECT * FROM users WHERE lower(email) = lower(%s)", (email,)).fetchone()
+                if not user or not verify_password(clean(payload.get("password")), user.get("password_hash")):
+                    self.send_json_error("Invalid email or password.", HTTPStatus.UNAUTHORIZED)
+                    return
+                token = create_session(db, user["id"])
+                self.send_auth_json(token, {"user": public_user(user)})
+                return
+
+            if path == "/api/auth/register":
+                display_name = clean(payload.get("display_name"))
+                email = clean(payload.get("email")).lower()
+                password = clean(payload.get("password"))
+                if not display_name or not email or len(password) < 8:
+                    self.send_json_error("Name, email and a password with at least 8 characters are required.", HTTPStatus.BAD_REQUEST)
+                    return
+                if db.execute("SELECT 1 FROM users WHERE lower(email) = lower(%s)", (email,)).fetchone():
+                    self.send_json_error("Email already exists.", HTTPStatus.CONFLICT)
+                    return
+                user = db.execute(
+                    """
+                    INSERT INTO users (display_name, role, email, password_hash, global_role, auth_provider, created_at)
+                    VALUES (%s, 'player', %s, %s, 'player', 'local', %s)
+                    RETURNING *
+                    """,
+                    (display_name, email, hash_password(password), timestamp),
+                ).fetchone()
+                token = create_session(db, user["id"])
+                self.send_auth_json(token, {"user": public_user(user)})
+                return
+
+            user = self.current_user(db)
+            if not user:
+                self.send_json_error("Authentication required.", HTTPStatus.UNAUTHORIZED)
+                return
+
+            if path == "/api/auth/logout":
+                token = self.session_token()
+                if token:
+                    db.execute("DELETE FROM auth_sessions WHERE token_hash = %s", (hash_token(token),))
+                encoded = b'{"ok": true}'
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.clear_session_cookie()
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
+
+            if path == "/api/users":
+                if user["global_role"] != "admin":
+                    self.send_json_error("Only admins can create users.", HTTPStatus.FORBIDDEN)
+                    return
+                new_user = create_local_user(db, payload)
+                self.send_json({"user": public_user(new_user)}, HTTPStatus.CREATED)
+                return
+
             if path == "/api/campaigns":
+                if user["global_role"] not in ("admin", "dm"):
+                    self.send_json_error("Only admins and DMs can create campaigns.", HTTPStatus.FORBIDDEN)
+                    return
                 name = clean(payload.get("name"))
                 if not name:
-                    self.send_json({"error": "Campaign name is required."}, HTTPStatus.BAD_REQUEST)
+                    self.send_json_error("Campaign name is required.", HTTPStatus.BAD_REQUEST)
                     return
                 campaign = db.execute(
                     """
@@ -327,50 +621,54 @@ class Handler(SimpleHTTPRequestHandler):
                     """,
                     (name, clean(payload.get("system")) or "D&D 5e", clean(payload.get("description")), timestamp),
                 ).fetchone()
-                dm_name = clean(payload.get("dm_name")) or "Dungeon Master"
-                user = db.execute(
-                    "INSERT INTO users (display_name, role, created_at) VALUES (%s, 'dm', %s) RETURNING id",
-                    (dm_name, timestamp),
-                ).fetchone()
                 db.execute(
                     "INSERT INTO memberships (user_id, campaign_id, role) VALUES (%s, %s, 'dm')",
                     (user["id"], campaign["id"]),
                 )
-                self.send_json({"id": campaign["id"], "dm_user_id": user["id"]}, HTTPStatus.CREATED)
+                self.send_json({"id": campaign["id"]}, HTTPStatus.CREATED)
                 return
 
             if path == "/api/pages":
                 campaign_id = int(payload["campaign_id"])
-                user_id = int(payload["user_id"])
-                membership = self.membership(db, campaign_id, user_id)
-                if not membership or membership["role"] != "dm":
-                    self.send_json({"error": "Only DMs can create wiki pages."}, HTTPStatus.FORBIDDEN)
+                membership = self.membership(db, campaign_id, user["id"])
+                if not can_access_campaign(user, membership):
+                    self.send_json_error("User is not part of this campaign.", HTTPStatus.FORBIDDEN)
+                    return
+                category = validated(payload.get("category"), PAGE_CATEGORIES, "overview")
+                if category in DM_ONLY_CATEGORIES and not can_manage_campaign(user, membership):
+                    self.send_json_error("Only DMs can create pages in this category.", HTTPStatus.FORBIDDEN)
+                    return
+                visibility = validated(payload.get("visibility"), PAGE_VISIBILITIES, "players")
+                if visibility == "dm" and not can_manage_campaign(user, membership):
+                    self.send_json_error("Only DMs can create DM-only pages.", HTTPStatus.FORBIDDEN)
                     return
                 page = db.execute(
                     """
-                    INSERT INTO pages (campaign_id, title, category, template_key, summary, visibility, body, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO pages (campaign_id, owner_id, title, category, template_key, summary, visibility, body, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
                         campaign_id,
+                        user["id"],
                         clean(payload.get("title")) or "Neue Seite",
-                        validated(payload.get("category"), PAGE_CATEGORIES, "overview"),
+                        category,
                         clean(payload.get("template_key")) or "generic",
                         clean(payload.get("summary")),
-                        validated(payload.get("visibility"), PAGE_VISIBILITIES, "players"),
+                        visibility,
                         payload.get("body", ""),
                         timestamp,
                     ),
                 ).fetchone()
+                save_page_readers(db, page["id"], payload.get("reader_ids", []))
                 self.send_json({"id": page["id"]}, HTTPStatus.CREATED)
                 return
 
             if path == "/api/notes":
                 campaign_id = int(payload["campaign_id"])
-                user_id = int(payload["user_id"])
-                if not self.membership(db, campaign_id, user_id):
-                    self.send_json({"error": "User is not part of this campaign."}, HTTPStatus.FORBIDDEN)
+                membership = self.membership(db, campaign_id, user["id"])
+                if not can_access_campaign(user, membership):
+                    self.send_json_error("User is not part of this campaign.", HTTPStatus.FORBIDDEN)
                     return
                 note = db.execute(
                     """
@@ -378,52 +676,87 @@ class Handler(SimpleHTTPRequestHandler):
                     VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
                     """,
-                    (
-                        campaign_id,
-                        user_id,
-                        clean(payload.get("title")) or "Neue Session-Notiz",
-                        payload.get("body", ""),
-                        timestamp,
-                    ),
+                    (campaign_id, user["id"], clean(payload.get("title")) or "Neue Session-Notiz", payload.get("body", ""), timestamp),
                 ).fetchone()
                 self.send_json({"id": note["id"]}, HTTPStatus.CREATED)
                 return
 
-            if path == "/api/members":
+            if path == "/api/invites":
                 campaign_id = int(payload["campaign_id"])
-                user_id = int(payload["user_id"])
-                membership = self.membership(db, campaign_id, user_id)
-                if not membership or membership["role"] != "dm":
-                    self.send_json({"error": "Only DMs can add campaign members."}, HTTPStatus.FORBIDDEN)
+                membership = self.membership(db, campaign_id, user["id"])
+                if not can_manage_campaign(user, membership):
+                    self.send_json_error("Only DMs can create invites.", HTTPStatus.FORBIDDEN)
                     return
-                display_name = clean(payload.get("display_name"))
-                role = payload.get("role", "player")
-                if not display_name:
-                    self.send_json({"error": "Display name is required."}, HTTPStatus.BAD_REQUEST)
+                token = secrets.token_urlsafe(32)
+                db.execute(
+                    """
+                    INSERT INTO campaign_invites (token_hash, campaign_id, invited_email, role, created_by, expires_at, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        hash_token(token),
+                        campaign_id,
+                        clean(payload.get("email")).lower() or None,
+                        validated(payload.get("role"), MEMBERSHIP_ROLES, "player"),
+                        user["id"],
+                        future(int(payload.get("expires_days", 14))),
+                        timestamp,
+                    ),
+                )
+                self.send_json({"invite_url": f"{PUBLIC_URL}/?invite={token}"}, HTTPStatus.CREATED)
+                return
+
+            if path == "/api/invites/accept":
+                invite = invite_by_token(db, clean(payload.get("token")))
+                if not invite:
+                    self.send_json_error("Invite not found or expired.", HTTPStatus.NOT_FOUND)
                     return
-                if role not in ("dm", "player"):
-                    self.send_json({"error": "Invalid role."}, HTTPStatus.BAD_REQUEST)
+                if invite["invited_email"] and (user.get("email") or "").lower() != invite["invited_email"]:
+                    self.send_json_error("This invite was created for a different email address.", HTTPStatus.FORBIDDEN)
                     return
-                existing_user = db.execute(
-                    "SELECT * FROM users WHERE lower(display_name) = lower(%s)",
-                    (display_name,),
-                ).fetchone()
-                if existing_user:
-                    new_user_id = existing_user["id"]
-                else:
-                    new_user_id = db.execute(
-                        "INSERT INTO users (display_name, role, created_at) VALUES (%s, %s, %s) RETURNING id",
-                        (display_name, role, timestamp),
-                    ).fetchone()["id"]
                 db.execute(
                     """
                     INSERT INTO memberships (user_id, campaign_id, role)
                     VALUES (%s, %s, %s)
                     ON CONFLICT(user_id, campaign_id) DO UPDATE SET role = excluded.role
                     """,
-                    (new_user_id, campaign_id, role),
+                    (user["id"], invite["campaign_id"], invite["role"]),
                 )
-                self.send_json({"id": new_user_id}, HTTPStatus.CREATED)
+                db.execute("UPDATE campaign_invites SET accepted_at = %s WHERE id = %s", (timestamp, invite["id"]))
+                self.send_json({"ok": True})
+                return
+
+            if path == "/api/members":
+                campaign_id = int(payload["campaign_id"])
+                membership = self.membership(db, campaign_id, user["id"])
+                if not can_manage_campaign(user, membership):
+                    self.send_json_error("Only DMs can add campaign members.", HTTPStatus.FORBIDDEN)
+                    return
+                target = db.execute("SELECT * FROM users WHERE lower(email) = lower(%s)", (clean(payload.get("email")),)).fetchone()
+                if not target:
+                    self.send_json_error("User must already have a CampaignCodex account. Create an invite or local account first.", HTTPStatus.NOT_FOUND)
+                    return
+                db.execute(
+                    """
+                    INSERT INTO memberships (user_id, campaign_id, role)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT(user_id, campaign_id) DO UPDATE SET role = excluded.role
+                    """,
+                    (target["id"], campaign_id, validated(payload.get("role"), MEMBERSHIP_ROLES, "player")),
+                )
+                self.send_json({"id": target["id"]}, HTTPStatus.CREATED)
+                return
+
+            if path == "/api/attachments":
+                self.create_attachment(db, user, payload)
+                return
+
+            if path == "/api/campaigns/import":
+                if user["global_role"] not in ("admin", "dm"):
+                    self.send_json_error("Only admins and DMs can import campaigns.", HTTPStatus.FORBIDDEN)
+                    return
+                campaign_id = import_campaign(db, user, payload)
+                self.send_json({"id": campaign_id}, HTTPStatus.CREATED)
                 return
 
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -431,15 +764,28 @@ class Handler(SimpleHTTPRequestHandler):
     def handle_api_put(self, path: str, payload: dict) -> None:
         timestamp = now()
         with connect() as db:
+            user = self.current_user(db)
+            if not user:
+                self.send_json_error("Authentication required.", HTTPStatus.UNAUTHORIZED)
+                return
+
             if path.startswith("/api/pages/"):
                 page_id = int(path.rsplit("/", 1)[1])
                 page = db.execute("SELECT * FROM pages WHERE id = %s", (page_id,)).fetchone()
                 if not page:
                     self.send_error(HTTPStatus.NOT_FOUND)
                     return
-                membership = self.membership(db, page["campaign_id"], int(payload["user_id"]))
-                if not membership or membership["role"] != "dm":
-                    self.send_json({"error": "Only DMs can edit wiki pages."}, HTTPStatus.FORBIDDEN)
+                membership = self.membership(db, page["campaign_id"], user["id"])
+                if not can_edit_page(user, membership, page):
+                    self.send_json_error("You cannot edit this page.", HTTPStatus.FORBIDDEN)
+                    return
+                category = validated(payload.get("category"), PAGE_CATEGORIES, page["category"])
+                visibility = validated(payload.get("visibility"), PAGE_VISIBILITIES, page["visibility"])
+                if category in DM_ONLY_CATEGORIES and not can_manage_campaign(user, membership):
+                    self.send_json_error("Only DMs can use this category.", HTTPStatus.FORBIDDEN)
+                    return
+                if visibility == "dm" and not can_manage_campaign(user, membership):
+                    self.send_json_error("Only DMs can create DM-only pages.", HTTPStatus.FORBIDDEN)
                     return
                 db.execute(
                     """
@@ -449,15 +795,16 @@ class Handler(SimpleHTTPRequestHandler):
                     """,
                     (
                         clean(payload.get("title")) or "Unbenannte Seite",
-                        validated(payload.get("category"), PAGE_CATEGORIES, page["category"]),
+                        category,
                         clean(payload.get("template_key")) or page["template_key"],
                         clean(payload.get("summary")),
-                        validated(payload.get("visibility"), PAGE_VISIBILITIES, page["visibility"]),
+                        visibility,
                         payload.get("body", ""),
                         timestamp,
                         page_id,
                     ),
                 )
+                save_page_readers(db, page_id, payload.get("reader_ids", []))
                 self.send_json({"ok": True})
                 return
 
@@ -467,10 +814,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if not note:
                     self.send_error(HTTPStatus.NOT_FOUND)
                     return
-                user_id = int(payload["user_id"])
-                membership = self.membership(db, note["campaign_id"], user_id)
-                if not membership or (membership["role"] != "dm" and note["user_id"] != user_id):
-                    self.send_json({"error": "You can only edit your own notes."}, HTTPStatus.FORBIDDEN)
+                membership = self.membership(db, note["campaign_id"], user["id"])
+                if not membership or (not can_manage_campaign(user, membership) and note["user_id"] != user["id"]):
+                    self.send_json_error("You can only edit your own notes.", HTTPStatus.FORBIDDEN)
                     return
                 db.execute(
                     "UPDATE session_notes SET title = %s, body = %s, updated_at = %s WHERE id = %s",
@@ -481,14 +827,555 @@ class Handler(SimpleHTTPRequestHandler):
 
         self.send_error(HTTPStatus.NOT_FOUND)
 
+    def campaign_payload(self, db: psycopg.Connection, campaign_id: int, user: dict, membership: dict | None) -> dict:
+        campaign = row_to_dict(db.execute("SELECT * FROM campaigns WHERE id = %s", (campaign_id,)).fetchone())
+        all_pages = [row_to_dict(row) for row in db.execute("SELECT * FROM pages WHERE campaign_id = %s ORDER BY category, title", (campaign_id,))]
+        pages = [page for page in all_pages if can_read_page(db, user, membership, page)]
+        notes = [
+            row_to_dict(row)
+            for row in db.execute(
+                """
+                SELECT session_notes.*, users.display_name AS author
+                FROM session_notes
+                JOIN users ON users.id = session_notes.user_id
+                WHERE campaign_id = %s AND (%s = true OR user_id = %s)
+                ORDER BY updated_at DESC
+                """,
+                (campaign_id, can_manage_campaign(user, membership), user["id"]),
+            )
+        ]
+        members = [
+            row_to_dict(row)
+            for row in db.execute(
+                """
+                SELECT users.id, users.display_name, users.email, memberships.role
+                FROM memberships
+                JOIN users ON users.id = memberships.user_id
+                WHERE campaign_id = %s
+                ORDER BY memberships.role, users.display_name
+                """,
+                (campaign_id,),
+            )
+        ]
+        attachments = visible_attachments(db, user, membership, pages, notes)
+        page_readers = readers_by_page(db, [page["id"] for page in pages])
+        invites = []
+        users = []
+        category_permissions = []
+        if can_manage_campaign(user, membership):
+            invites = [
+                row_to_dict(row)
+                for row in db.execute(
+                    """
+                    SELECT campaign_invites.id, campaign_invites.invited_email, campaign_invites.role,
+                           campaign_invites.expires_at, campaign_invites.accepted_at, users.display_name AS created_by_name
+                    FROM campaign_invites
+                    JOIN users ON users.id = campaign_invites.created_by
+                    WHERE campaign_id = %s
+                    ORDER BY campaign_invites.created_at DESC
+                    """,
+                    (campaign_id,),
+                )
+            ]
+            users = [public_user(row) for row in db.execute("SELECT * FROM users ORDER BY display_name")]
+            category_permissions = [
+                row_to_dict(row)
+                for row in db.execute(
+                    "SELECT * FROM category_permissions WHERE campaign_id = %s ORDER BY category, role",
+                    (campaign_id,),
+                )
+            ]
+        return {
+            "campaign": campaign,
+            "membership": row_to_dict(membership),
+            "pages": pages,
+            "notes": notes,
+            "members": members,
+            "attachments": attachments,
+            "page_readers": page_readers,
+            "invites": invites,
+            "users": users,
+            "category_permissions": category_permissions,
+            "current_user": public_user(user),
+        }
+
     def membership(self, db: psycopg.Connection, campaign_id: int, user_id: int) -> dict | None:
         return db.execute(
             "SELECT * FROM memberships WHERE campaign_id = %s AND user_id = %s",
             (campaign_id, user_id),
         ).fetchone()
 
+    def search(self, db: psycopg.Connection, campaign_id: int, user: dict, membership: dict | None, term: str) -> list[dict]:
+        if not term:
+            return []
+        like = f"%{term}%"
+        rows = db.execute(
+            """
+            SELECT 'page' AS type, id, title, summary, body, category, updated_at, NULL::TEXT AS author
+            FROM pages
+            WHERE campaign_id = %s AND (title ILIKE %s OR summary ILIKE %s OR body ILIKE %s)
+            UNION ALL
+            SELECT 'note' AS type, session_notes.id, session_notes.title, '' AS summary, session_notes.body,
+                   'notes' AS category, session_notes.updated_at, users.display_name AS author
+            FROM session_notes
+            JOIN users ON users.id = session_notes.user_id
+            WHERE session_notes.campaign_id = %s AND (session_notes.title ILIKE %s OR session_notes.body ILIKE %s)
+            ORDER BY updated_at DESC
+            LIMIT 50
+            """,
+            (campaign_id, like, like, like, campaign_id, like, like),
+        ).fetchall()
+        results = []
+        for row in rows:
+            item = row_to_dict(row)
+            if item["type"] == "page":
+                page = db.execute("SELECT * FROM pages WHERE id = %s", (item["id"],)).fetchone()
+                if not can_read_page(db, user, membership, page):
+                    continue
+            elif not can_manage_campaign(user, membership):
+                note = db.execute("SELECT * FROM session_notes WHERE id = %s", (item["id"],)).fetchone()
+                if note["user_id"] != user["id"]:
+                    continue
+            item["excerpt"] = make_excerpt(item["body"], term)
+            results.append(item)
+        return results
+
+    def create_attachment(self, db: psycopg.Connection, user: dict, payload: dict) -> None:
+        page_id = payload.get("page_id")
+        note_id = payload.get("note_id")
+        campaign_id = int(payload["campaign_id"])
+        membership = self.membership(db, campaign_id, user["id"])
+        if not can_access_campaign(user, membership):
+            self.send_json_error("User is not part of this campaign.", HTTPStatus.FORBIDDEN)
+            return
+        if page_id:
+            page = db.execute("SELECT * FROM pages WHERE id = %s", (int(page_id),)).fetchone()
+            if not page or not can_edit_page(user, membership, page):
+                self.send_json_error("You cannot attach files to this page.", HTTPStatus.FORBIDDEN)
+                return
+        if note_id:
+            note = db.execute("SELECT * FROM session_notes WHERE id = %s", (int(note_id),)).fetchone()
+            if not note or (not can_manage_campaign(user, membership) and note["user_id"] != user["id"]):
+                self.send_json_error("You cannot attach files to this note.", HTTPStatus.FORBIDDEN)
+                return
+        content = base64.b64decode(payload.get("data_base64", ""))
+        attachment = db.execute(
+            """
+            INSERT INTO attachments (campaign_id, page_id, note_id, uploaded_by, filename, mime_type, content, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                campaign_id,
+                int(page_id) if page_id else None,
+                int(note_id) if note_id else None,
+                user["id"],
+                clean(payload.get("filename")) or "attachment",
+                clean(payload.get("mime_type")) or "application/octet-stream",
+                content,
+                now(),
+            ),
+        ).fetchone()
+        self.send_json({"id": attachment["id"]}, HTTPStatus.CREATED)
+
+    def download_attachment(self, db: psycopg.Connection, attachment_id: int, user: dict) -> None:
+        attachment = db.execute("SELECT * FROM attachments WHERE id = %s", (attachment_id,)).fetchone()
+        if not attachment:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        membership = self.membership(db, attachment["campaign_id"], user["id"])
+        if not can_access_campaign(user, membership):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        if attachment["page_id"]:
+            page = db.execute("SELECT * FROM pages WHERE id = %s", (attachment["page_id"],)).fetchone()
+            if not can_read_page(db, user, membership, page):
+                self.send_error(HTTPStatus.FORBIDDEN)
+                return
+        if attachment["note_id"] and not can_manage_campaign(user, membership):
+            note = db.execute("SELECT * FROM session_notes WHERE id = %s", (attachment["note_id"],)).fetchone()
+            if note["user_id"] != user["id"]:
+                self.send_error(HTTPStatus.FORBIDDEN)
+                return
+        content = bytes(attachment["content"])
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", attachment["mime_type"])
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Content-Disposition", f'inline; filename="{attachment["filename"]}"')
+        self.end_headers()
+        self.wfile.write(content)
+
+    def handle_oauth_callback(self, db: psycopg.Connection, query: dict[str, list[str]]) -> None:
+        code = clean(query.get("code", [""])[0])
+        state = clean(query.get("state", [""])[0])
+        stored_state = db.execute(
+            "SELECT * FROM oauth_states WHERE state_hash = %s AND expires_at > %s",
+            (hash_token(state), now()),
+        ).fetchone()
+        if not code or not stored_state:
+            self.redirect("/?auth_error=oauth_state")
+            return
+        db.execute("DELETE FROM oauth_states WHERE state_hash = %s", (hash_token(state),))
+        token_data = post_form(
+            f"{OIDC_ISSUER}/application/o/token/",
+            {
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": OIDC_REDIRECT_URI,
+                "client_id": OIDC_CLIENT_ID,
+                "client_secret": OIDC_CLIENT_SECRET,
+            },
+        )
+        userinfo = get_json(
+            f"{OIDC_ISSUER}/application/o/userinfo/",
+            token_data["access_token"],
+        )
+        user = upsert_oauth_user(db, userinfo)
+        token = create_session(db, user["id"])
+        encoded = b""
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", "/")
+        self.set_session_cookie(token)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        self.wfile.write(encoded)
+
     def required_int(self, query: dict[str, list[str]], key: str) -> int:
         return int(query.get(key, ["0"])[0])
+
+
+def can_access_campaign(user: dict, membership: dict | None) -> bool:
+    return user["global_role"] == "admin" or bool(membership)
+
+
+def can_manage_campaign(user: dict, membership: dict | None) -> bool:
+    return user["global_role"] == "admin" or (membership and membership["role"] == "dm")
+
+
+def can_edit_page(user: dict, membership: dict | None, page: dict) -> bool:
+    if can_manage_campaign(user, membership):
+        return True
+    if not membership:
+        return False
+    return page.get("owner_id") == user["id"]
+
+
+def can_read_page(db: psycopg.Connection, user: dict, membership: dict | None, page: dict) -> bool:
+    if not can_access_campaign(user, membership):
+        return False
+    if can_manage_campaign(user, membership):
+        return True
+    if page["owner_id"] == user["id"]:
+        return True
+    if page["category"] in DM_ONLY_CATEGORIES or page["visibility"] == "dm":
+        return False
+    if page["visibility"] == "private":
+        return False
+    if page["visibility"] == "restricted":
+        acl = db.execute(
+            "SELECT can_read FROM page_permissions WHERE page_id = %s AND user_id = %s",
+            (page["id"], user["id"]),
+        ).fetchone()
+        return bool(acl and acl["can_read"])
+    return True
+
+
+def visible_attachments(db: psycopg.Connection, user: dict, membership: dict | None, pages: list[dict], notes: list[dict]) -> list[dict]:
+    page_ids = [page["id"] for page in pages] or [0]
+    note_ids = [note["id"] for note in notes] or [0]
+    rows = db.execute(
+        """
+        SELECT id, campaign_id, page_id, note_id, filename, mime_type, created_at
+        FROM attachments
+        WHERE page_id = ANY(%s) OR note_id = ANY(%s)
+        ORDER BY created_at DESC
+        """,
+        (page_ids, note_ids),
+    ).fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
+def readers_by_page(db: psycopg.Connection, page_ids: list[int]) -> dict[str, list[int]]:
+    if not page_ids:
+        return {}
+    rows = db.execute(
+        "SELECT page_id, user_id FROM page_permissions WHERE page_id = ANY(%s) AND can_read = true",
+        (page_ids,),
+    ).fetchall()
+    result: dict[str, list[int]] = {}
+    for row in rows:
+        result.setdefault(str(row["page_id"]), []).append(row["user_id"])
+    return result
+
+
+def save_page_readers(db: psycopg.Connection, page_id: int, reader_ids: list) -> None:
+    db.execute("DELETE FROM page_permissions WHERE page_id = %s", (page_id,))
+    clean_ids = sorted({int(user_id) for user_id in reader_ids if str(user_id).isdigit()})
+    with db.cursor() as cursor:
+        cursor.executemany(
+            "INSERT INTO page_permissions (page_id, user_id, can_read) VALUES (%s, %s, true)",
+            [(page_id, user_id) for user_id in clean_ids],
+        )
+
+
+def create_session(db: psycopg.Connection, user_id: int) -> str:
+    token = secrets.token_urlsafe(40)
+    db.execute(
+        "INSERT INTO auth_sessions (token_hash, user_id, expires_at, created_at) VALUES (%s, %s, %s, %s)",
+        (hash_token(token), user_id, future(SESSION_DAYS), now()),
+    )
+    db.execute("UPDATE users SET last_login_at = %s WHERE id = %s", (now(), user_id))
+    return token
+
+
+def create_local_user(db: psycopg.Connection, payload: dict) -> dict:
+    email = clean(payload.get("email")).lower()
+    password = clean(payload.get("password"))
+    display_name = clean(payload.get("display_name"))
+    global_role = validated(payload.get("global_role"), GLOBAL_ROLES, "player")
+    role = "dm" if global_role in ("admin", "dm") else "player"
+    return db.execute(
+        """
+        INSERT INTO users (display_name, role, email, password_hash, global_role, auth_provider, created_at)
+        VALUES (%s, %s, %s, %s, %s, 'local', %s)
+        RETURNING *
+        """,
+        (display_name, role, email, hash_password(password), global_role, now()),
+    ).fetchone()
+
+
+def invite_by_token(db: psycopg.Connection, token: str) -> dict | None:
+    if not token:
+        return None
+    invite = db.execute(
+        """
+        SELECT campaign_invites.*, campaigns.name AS campaign_name
+        FROM campaign_invites
+        JOIN campaigns ON campaigns.id = campaign_invites.campaign_id
+        WHERE token_hash = %s AND expires_at > %s AND accepted_at IS NULL
+        """,
+        (hash_token(token), now()),
+    ).fetchone()
+    return row_to_dict(invite)
+
+
+def export_campaign(db: psycopg.Connection, campaign_id: int) -> dict:
+    campaign = row_to_dict(db.execute("SELECT * FROM campaigns WHERE id = %s", (campaign_id,)).fetchone())
+    pages = [row_to_dict(row) for row in db.execute("SELECT * FROM pages WHERE campaign_id = %s ORDER BY id", (campaign_id,))]
+    notes = [row_to_dict(row) for row in db.execute("SELECT * FROM session_notes WHERE campaign_id = %s ORDER BY id", (campaign_id,))]
+    memberships = [row_to_dict(row) for row in db.execute("SELECT * FROM memberships WHERE campaign_id = %s", (campaign_id,))]
+    attachments = []
+    for row in db.execute("SELECT * FROM attachments WHERE campaign_id = %s ORDER BY id", (campaign_id,)):
+        item = row_to_dict(row)
+        item["content_base64"] = base64.b64encode(bytes(item.pop("content"))).decode("ascii")
+        attachments.append(item)
+    return {
+        "format": "campaigncodex.v1",
+        "exported_at": now(),
+        "campaign": campaign,
+        "pages": pages,
+        "notes": notes,
+        "memberships": memberships,
+        "attachments": attachments,
+    }
+
+
+def import_campaign(db: psycopg.Connection, user: dict, payload: dict) -> int:
+    data = payload.get("data", payload)
+    campaign = data["campaign"]
+    timestamp = now()
+    new_campaign_id = db.execute(
+        "INSERT INTO campaigns (name, system, description, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
+        (
+            f"{campaign['name']} Import",
+            campaign.get("system", "D&D 5e"),
+            campaign.get("description", ""),
+            timestamp,
+        ),
+    ).fetchone()["id"]
+    db.execute(
+        "INSERT INTO memberships (user_id, campaign_id, role) VALUES (%s, %s, 'dm')",
+        (user["id"], new_campaign_id),
+    )
+    page_id_map = {}
+    note_id_map = {}
+    for page in data.get("pages", []):
+        new_page = db.execute(
+            """
+            INSERT INTO pages (campaign_id, owner_id, title, category, template_key, summary, visibility, body, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                new_campaign_id,
+                user["id"],
+                page["title"],
+                page["category"],
+                page.get("template_key", "generic"),
+                page.get("summary", ""),
+                page.get("visibility", "players"),
+                page.get("body", ""),
+                timestamp,
+            ),
+        ).fetchone()
+        page_id_map[page["id"]] = new_page["id"]
+    for note in data.get("notes", []):
+        new_note = db.execute(
+            """
+            INSERT INTO session_notes (campaign_id, user_id, title, body, updated_at)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                new_campaign_id,
+                user["id"],
+                note.get("title", "Importierte Notiz"),
+                note.get("body", ""),
+                timestamp,
+            ),
+        ).fetchone()
+        note_id_map[note["id"]] = new_note["id"]
+    for attachment in data.get("attachments", []):
+        old_page_id = attachment.get("page_id")
+        old_note_id = attachment.get("note_id")
+        if old_page_id and old_page_id not in page_id_map:
+            continue
+        if old_note_id and old_note_id not in note_id_map:
+            continue
+        db.execute(
+            """
+            INSERT INTO attachments (campaign_id, page_id, note_id, uploaded_by, filename, mime_type, content, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                new_campaign_id,
+                page_id_map.get(old_page_id),
+                note_id_map.get(old_note_id),
+                user["id"],
+                attachment["filename"],
+                attachment.get("mime_type", "application/octet-stream"),
+                base64.b64decode(attachment.get("content_base64", "")),
+                timestamp,
+            ),
+        )
+    return new_campaign_id
+
+
+def upsert_oauth_user(db: psycopg.Connection, userinfo: dict) -> dict:
+    subject = str(userinfo["sub"])
+    email = clean(userinfo.get("email")).lower()
+    display_name = clean(userinfo.get("name")) or clean(userinfo.get("preferred_username")) or email
+    groups = userinfo.get("groups") or []
+    global_role = "player"
+    if OIDC_ADMIN_GROUP in groups:
+        global_role = "admin"
+    elif OIDC_DM_GROUP in groups:
+        global_role = "dm"
+    existing = db.execute(
+        "SELECT * FROM users WHERE auth_provider = 'authentik' AND auth_subject = %s",
+        (subject,),
+    ).fetchone()
+    if not existing and email:
+        existing = db.execute("SELECT * FROM users WHERE lower(email) = lower(%s)", (email,)).fetchone()
+    role = "dm" if global_role in ("admin", "dm") else "player"
+    if existing:
+        return db.execute(
+            """
+            UPDATE users
+            SET display_name = %s, email = %s, global_role = %s, role = %s,
+                auth_provider = 'authentik', auth_subject = %s
+            WHERE id = %s
+            RETURNING *
+            """,
+            (display_name, email, global_role, role, subject, existing["id"]),
+        ).fetchone()
+    return db.execute(
+        """
+        INSERT INTO users (display_name, role, email, global_role, auth_provider, auth_subject, created_at)
+        VALUES (%s, %s, %s, %s, 'authentik', %s, %s)
+        RETURNING *
+        """,
+        (display_name, role, email, global_role, subject, now()),
+    ).fetchone()
+
+
+def public_user(user: dict | None) -> dict | None:
+    if not user:
+        return None
+    return {
+        "id": user["id"],
+        "display_name": user["display_name"],
+        "email": user.get("email"),
+        "global_role": user.get("global_role", user.get("role", "player")),
+        "auth_provider": user.get("auth_provider", "local"),
+    }
+
+
+def visible_campaigns_query(user: dict) -> str:
+    if user["global_role"] == "admin":
+        return "SELECT * FROM campaigns ORDER BY name"
+    return """
+        SELECT campaigns.*
+        FROM campaigns
+        JOIN memberships ON memberships.campaign_id = campaigns.id
+        WHERE memberships.user_id = %s
+        ORDER BY campaigns.name
+    """
+
+
+def visible_campaigns_params(user: dict) -> tuple:
+    return () if user["global_role"] == "admin" else (user["id"],)
+
+
+def oauth_enabled() -> bool:
+    return bool(OIDC_ISSUER and OIDC_CLIENT_ID and OIDC_CLIENT_SECRET)
+
+
+def post_form(url: str, data: dict) -> dict:
+    request = Request(
+        url,
+        data=urlencode(data).encode("utf-8"),
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def get_json(url: str, access_token: str) -> dict:
+    request = Request(url, headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"})
+    with urlopen(request, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    iterations = 260000
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
+    return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
+
+
+def verify_password(password: str, stored: str | None) -> bool:
+    if not stored:
+        return False
+    algorithm, iterations, salt, expected = stored.split("$", 3)
+    if algorithm != "pbkdf2_sha256":
+        return False
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), int(iterations))
+    return hmac.compare_digest(digest.hex(), expected)
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def make_excerpt(body: str, term: str) -> str:
+    index = body.lower().find(term.lower())
+    if index < 0:
+        return body[:180]
+    start = max(0, index - 70)
+    end = min(len(body), index + 140)
+    return body[start:end]
 
 
 def clean(value: object) -> str:

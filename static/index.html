@@ -7,20 +7,58 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <main class="shell">
+    <main id="authView" class="auth-shell">
+      <section class="auth-panel">
+        <p class="eyebrow">CampaignCodex</p>
+        <h1>D&D Kampagnen-Wiki</h1>
+        <p class="muted">Melde dich lokal an, registriere einen Account oder nutze OAuth2/OIDC, wenn es auf dem Server eingerichtet ist.</p>
+
+        <div class="auth-grid">
+          <form id="loginForm" class="stack">
+            <h2>Anmelden</h2>
+            <label>
+              E-Mail
+              <input id="loginEmail" type="email" autocomplete="email" required>
+            </label>
+            <label>
+              Passwort
+              <input id="loginPassword" type="password" autocomplete="current-password" required>
+            </label>
+            <button>Anmelden</button>
+            <a id="oauthLogin" class="button-link" href="/api/auth/oauth/start">Mit OAuth anmelden</a>
+          </form>
+
+          <form id="registerForm" class="stack">
+            <h2>Account erstellen</h2>
+            <label>
+              Name
+              <input id="registerName" autocomplete="name" required>
+            </label>
+            <label>
+              E-Mail
+              <input id="registerEmail" type="email" autocomplete="email" required>
+            </label>
+            <label>
+              Passwort
+              <input id="registerPassword" type="password" autocomplete="new-password" minlength="8" required>
+            </label>
+            <button class="secondary">Registrieren</button>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <main id="appView" class="shell hidden">
       <aside class="sidebar">
         <div>
           <p class="eyebrow">CampaignCodex</p>
           <h1>D&D Kampagnen-Wiki</h1>
+          <p id="currentUser" class="muted"></p>
         </div>
 
         <label>
           Kampagne
           <select id="campaignSelect"></select>
-        </label>
-        <label>
-          Ansicht als
-          <select id="userSelect"></select>
         </label>
 
         <button id="newCampaignButton" class="secondary">Neue Kampagne</button>
@@ -37,6 +75,8 @@
           </div>
           <div id="members"></div>
         </section>
+
+        <button id="logoutButton" class="secondary">Abmelden</button>
       </aside>
 
       <section class="workspace">
@@ -47,15 +87,26 @@
             <p id="campaignDescription"></p>
           </div>
           <div class="actions">
+            <label id="searchWrap" class="search">
+              Suche
+              <input id="searchInput" type="search" placeholder="Wiki und Notizen durchsuchen">
+            </label>
             <button id="newPageButton">Wiki-Seite</button>
             <button id="newNoteButton">Session-Notiz</button>
           </div>
         </header>
 
+        <section id="inviteBanner" class="notice hidden">
+          <span id="inviteText"></span>
+          <button id="acceptInviteButton">Einladung annehmen</button>
+        </section>
+
         <nav class="tabs" aria-label="Bereiche">
           <button class="tab active" data-tab="wiki">Wiki</button>
           <button id="dmTab" class="tab" data-tab="dm">DM-Bereich</button>
           <button class="tab" data-tab="notes">Notizen</button>
+          <button class="tab" data-tab="search">Suche</button>
+          <button class="tab" data-tab="settings">Einstellungen</button>
         </nav>
 
         <section id="wikiView" class="panel active">
@@ -68,6 +119,72 @@
 
         <section id="notesView" class="panel">
           <div id="notes" class="grid"></div>
+        </section>
+
+        <section id="searchView" class="panel">
+          <div id="searchResults" class="grid"></div>
+        </section>
+
+        <section id="settingsView" class="panel settings-grid">
+          <section class="settings-section">
+            <h2>Einladungen</h2>
+            <form id="inviteForm" class="stack">
+              <label>
+                E-Mail optional
+                <input id="inviteEmail" type="email">
+              </label>
+              <label>
+                Rolle
+                <select id="inviteRole">
+                  <option value="player">Spieler</option>
+                  <option value="dm">DM</option>
+                </select>
+              </label>
+              <button>Einladungslink erstellen</button>
+            </form>
+            <input id="inviteUrl" readonly>
+            <div id="inviteList"></div>
+          </section>
+
+          <section class="settings-section">
+            <h2>Lokale User</h2>
+            <form id="userForm" class="stack">
+              <label>
+                Name
+                <input id="newUserName">
+              </label>
+              <label>
+                E-Mail
+                <input id="newUserEmail" type="email">
+              </label>
+              <label>
+                Passwort
+                <input id="newUserPassword" type="password" minlength="8">
+              </label>
+              <label>
+                Gruppe
+                <select id="newUserRole">
+                  <option value="player">Spieler</option>
+                  <option value="dm">DM</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+              <button>Lokalen User erstellen</button>
+            </form>
+            <div id="userList"></div>
+          </section>
+
+          <section class="settings-section">
+            <h2>Export / Import</h2>
+            <div class="stack">
+              <button id="exportButton">Kampagne exportieren</button>
+              <label>
+                Import-Datei
+                <input id="importFile" type="file" accept="application/json">
+              </label>
+              <button id="importButton">Kampagne importieren</button>
+            </div>
+          </section>
         </section>
       </section>
     </main>
@@ -97,14 +214,30 @@
           <label>
             Sichtbarkeit
             <select id="visibilityInput">
-              <option value="players">Spieler sichtbar</option>
-              <option value="dm">Nur DM</option>
+              <option value="players">Alle Kampagnenmitglieder</option>
+              <option value="restricted">Nur ausgewählte Spieler</option>
+              <option value="private">Nur ich und DMs</option>
+              <option value="dm">Nur DMs</option>
             </select>
           </label>
         </div>
+        <fieldset id="readerField" class="reader-field">
+          <legend>Sichtbar für</legend>
+          <div id="readerList" class="checkbox-grid"></div>
+        </fieldset>
+        <div class="markdown-grid">
+          <label>
+            Markdown
+            <textarea id="bodyInput" rows="14"></textarea>
+          </label>
+          <section>
+            <h3>Vorschau</h3>
+            <div id="markdownPreview" class="markdown-preview"></div>
+          </section>
+        </div>
         <label>
-          Inhalt
-          <textarea id="bodyInput" rows="12"></textarea>
+          Datei oder Bild anhängen
+          <input id="attachmentInput" type="file">
         </label>
         <div class="dialog-actions">
           <button value="cancel" class="secondary">Abbrechen</button>
@@ -135,10 +268,6 @@
           <input id="newCampaignSystem" value="D&D 5e">
         </label>
         <label>
-          DM-Name
-          <input id="newDmName" value="Dungeon Master">
-        </label>
-        <label>
           Beschreibung
           <textarea id="newCampaignDescription" rows="5"></textarea>
         </label>
@@ -153,8 +282,8 @@
       <form method="dialog" class="editor">
         <h2>Mitglied hinzufügen</h2>
         <label>
-          Name
-          <input id="memberNameInput" required>
+          E-Mail des bestehenden Users
+          <input id="memberEmailInput" type="email" required>
         </label>
         <label>
           Rolle
