@@ -1,0 +1,94 @@
+name: Publish GitHub Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.2.0-beta.1 or v1.0.0 after explicit approval"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" == *beta* || "$TAG" == *alpha* || "$TAG" == *rc* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build categorized release notes
+        shell: bash
+        run: |
+          TAG="${{ steps.release.outputs.tag }}"
+          VERSION="${TAG#v}"
+          PREVIOUS_TAG="$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n 1 || true)"
+          RANGE="$TAG"
+          if [ -n "$PREVIOUS_TAG" ]; then
+            RANGE="${PREVIOUS_TAG}..${TAG}"
+          fi
+
+          if [ -f CHANGELOG.md ]; then
+            awk -v version="$VERSION" '
+              $0 ~ "^## " version "([ -]|$)" { found = 1; print; next }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md > changelog-section.md
+          fi
+
+          if [ -s changelog-section.md ]; then
+            echo "# CampaignCodex ${TAG}" > release-notes.md
+            echo "" >> release-notes.md
+            cat changelog-section.md >> release-notes.md
+            exit 0
+          fi
+
+          write_section() {
+            local title="$1"
+            local pattern="$2"
+            echo "## ${title}" >> release-notes.md
+            local lines
+            lines="$(git log "$RANGE" --pretty=format:'- %s' --extended-regexp --regexp-ignore-case --grep="$pattern" || true)"
+            if [ -n "$lines" ]; then
+              echo "$lines" >> release-notes.md
+            else
+              echo "- Keine Einträge." >> release-notes.md
+            fi
+            echo "" >> release-notes.md
+          }
+
+          echo "# CampaignCodex ${TAG}" > release-notes.md
+          echo "" >> release-notes.md
+          write_section "Hinzugefügt" "^(add|added|feat|feature|füge|hinzu|implement)"
+          write_section "Gepatcht" "^(fix|fixed|patch|patched|hotfix|repair|korrig|beheb|update|change|adjust|refactor)"
+          write_section "Gelöscht" "^(remove|removed|delete|deleted|drop|dropped|entfern|lösch)"
+          echo "## Vollständiger Commit-Verlauf" >> release-notes.md
+          git log "$RANGE" --pretty=format:'- %h %s' >> release-notes.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: CampaignCodex ${{ steps.release.outputs.tag }}
+          prerelease: ${{ steps.release.outputs.prerelease }}
+          body_path: release-notes.md

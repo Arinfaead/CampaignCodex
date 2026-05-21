@@ -1,0 +1,44 @@
+{
+  "name": "campaigncodex",
+  "version": "1.1.0",
+  "description": "Self-hosted campaign wiki for pen-and-paper groups.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "private": false,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "node scripts/migrate.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.830.0",
+    "drizzle-orm": "^0.45.2",
+    "lucide-react": "^0.468.0",
+    "markdown-it": "^14.1.0",
+    "next": "^15.4.0",
+    "postgres": "^3.4.7",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "sanitize-html": "^2.17.0",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.15.30",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@types/sanitize-html": "^2.16.0",
+    "eslint": "^9.28.0",
+    "eslint-config-next": "^15.4.0",
+    "typescript": "^5.8.3"
+  },
+  "overrides": {
+    "postcss": "^8.5.10"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

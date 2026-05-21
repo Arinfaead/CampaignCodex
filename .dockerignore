@@ -1,0 +1,14 @@
+.git
+.github
+.next
+node_modules
+coverage
+.env
+.env*.local
+*.log
+.DS_Store
+data
+minio-data
+postgres-data
+__pycache__
+*.pyc

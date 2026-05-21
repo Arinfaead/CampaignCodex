@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+dist/
+coverage/
+.env
+.env*.local
+!.env.example
+*.log
+tsconfig.tsbuildinfo
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+data/
+minio-data/
+postgres-data/
