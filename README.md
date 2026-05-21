@@ -5,11 +5,12 @@ CampaignCodex is a self-hosted open-source web app for pen-and-paper groups. Dun
 The project is built for local and self-hosted operation:
 
 ```bash
+nano .env
 nano docker-compose.yml
 docker compose up -d
 ```
 
-Paste the `docker-compose.yml` from this repository into that file. No `git clone`, local Node.js, npm, or build step is required for operators. Docker Compose pulls the published CampaignCodex image and runs database migrations, PostgreSQL, and MinIO inside containers.
+Paste the `.env` and `docker-compose.yml` from this repository into those files. No `git clone`, local Node.js, npm, or build step is required for operators. Docker Compose pulls the published CampaignCodex image and runs database migrations, PostgreSQL, and MinIO inside containers.
 
 The web app is available at `http://localhost:8080`. MinIO's console is available at `http://localhost:9001`.
 
@@ -53,7 +54,7 @@ Add schema changes as explicit SQL files in `migrations/` and keep `src/db/schem
 
 ## Configuration
 
-`docker compose up -d` works with only the copied `docker-compose.yml` file. Before exposing an instance beyond a local machine, edit the placeholder secrets directly in `docker-compose.yml` or provide the same variables through an `.env` file. Important settings:
+`docker compose up -d` works with only the copied `.env` and `docker-compose.yml` files. Before exposing an instance beyond a local machine, edit the placeholder secrets in `.env`. Important settings:
 
 - `DATABASE_URL` points the app at PostgreSQL.
 - `SESSION_SECRET` is mixed into session-token hashes.
@@ -69,30 +70,68 @@ Add schema changes as explicit SQL files in `migrations/` and keep `src/db/schem
 4. The first registered user becomes an instance admin. Campaign access is still membership-based.
 5. Migrations are plain SQL files in `migrations/` so self-hosted operators can audit database changes easily.
 
-## Standalone Docker Compose
+## Standalone Setup
+
+Create `.env`, paste the following content, and adjust the placeholder secrets when needed.
+
+```env
+# CampaignCodex image
+CAMPAIGNCODEX_IMAGE=ghcr.io/arinfaead/campaigncodex:v1.1.0
+CAMPAIGNCODEX_PLATFORM=linux/amd64
+
+# Web app
+APP_PORT=8080
+PORT=3000
+PUBLIC_URL=http://localhost:8080
+COOKIE_SECURE=false
+ALLOW_REGISTRATION=true
+SESSION_SECRET=change-this-to-a-long-random-secret
+
+# PostgreSQL
+POSTGRES_IMAGE=postgres:16-alpine
+POSTGRES_DB=campaign_codex
+POSTGRES_USER=campaign_codex
+POSTGRES_PASSWORD=change-this-password
+
+# MinIO
+MINIO_IMAGE=minio/minio:RELEASE.2025-04-22T22-12-26Z
+MINIO_MC_IMAGE=minio/mc:RELEASE.2025-04-16T18-13-26Z
+MINIO_API_PORT=9000
+MINIO_CONSOLE_PORT=9001
+MINIO_ROOT_USER=campaigncodex
+MINIO_ROOT_PASSWORD=change-this-minio-root-password
+
+# S3-compatible app storage
+S3_ENDPOINT=http://minio:9000
+S3_REGION=us-east-1
+S3_BUCKET=campaigncodex
+S3_ACCESS_KEY=campaigncodex-app
+S3_SECRET_KEY=change-this-minio-secret
+S3_FORCE_PATH_STYLE=true
+```
 
 Create `docker-compose.yml`, paste the following content, save, and run `docker compose up -d`.
 
 ```yaml
 services:
   app:
-    image: ghcr.io/arinfaead/campaigncodex:v1.1.0
-    platform: linux/amd64
+    image: ${CAMPAIGNCODEX_IMAGE}
+    platform: ${CAMPAIGNCODEX_PLATFORM}
     environment:
-      DATABASE_URL: postgres://campaign_codex:change-this-password@postgres:5432/campaign_codex
-      SESSION_SECRET: change-this-to-a-long-random-secret
-      PUBLIC_URL: http://localhost:8080
-      COOKIE_SECURE: "false"
-      ALLOW_REGISTRATION: "true"
-      S3_ENDPOINT: http://minio:9000
-      S3_REGION: us-east-1
-      S3_BUCKET: campaigncodex
-      S3_ACCESS_KEY: campaigncodex-app
-      S3_SECRET_KEY: change-this-minio-secret
-      S3_FORCE_PATH_STYLE: "true"
-      PORT: "3000"
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      SESSION_SECRET: ${SESSION_SECRET}
+      PUBLIC_URL: ${PUBLIC_URL}
+      COOKIE_SECURE: ${COOKIE_SECURE}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_REGION: ${S3_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE}
+      PORT: ${PORT}
     ports:
-      - "8080:3000"
+      - "${APP_PORT}:${PORT}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,11 +142,11 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16-alpine
+    image: ${POSTGRES_IMAGE}
     environment:
-      POSTGRES_DB: campaign_codex
-      POSTGRES_USER: campaign_codex
-      POSTGRES_PASSWORD: change-this-password
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -118,14 +157,14 @@ services:
     restart: unless-stopped
 
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: ${MINIO_IMAGE}
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: campaigncodex
-      MINIO_ROOT_PASSWORD: change-this-minio-root-password
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -136,16 +175,16 @@ services:
     restart: unless-stopped
 
   minio-init:
-    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    image: ${MINIO_MC_IMAGE}
     depends_on:
       minio:
         condition: service_healthy
     environment:
-      S3_BUCKET: campaigncodex
-      S3_ACCESS_KEY: campaigncodex-app
-      S3_SECRET_KEY: change-this-minio-secret
-      MINIO_ROOT_USER: campaigncodex
-      MINIO_ROOT_PASSWORD: change-this-minio-root-password
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     entrypoint:
       - /bin/sh
       - -c

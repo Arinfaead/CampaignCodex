@@ -10,7 +10,8 @@
 - MinIO/S3-kompatible Storage-Schicht für Uploads statt lokaler Dateien oder Datenbank-BLOBs.
 - Docker Compose Stack mit App, PostgreSQL, MinIO und Bucket-Initialisierung.
 - Admin-Start ohne lokale Node.js- oder npm-Installation; Docker installiert App-Abhängigkeiten im Container.
-- Standalone-Compose-Betrieb ohne `git clone`; Admins können nur eine `docker-compose.yml` anlegen und starten.
+- Standalone-Compose-Betrieb ohne `git clone`; Admins legen nur `.env` und `docker-compose.yml` an und starten Docker Compose.
+- Anpassbare Docker-Compose-Werte wurden in eine `.env` ausgelagert.
 - Serverseitige Authentifizierung mit scrypt-Passwort-Hashes und gehashten Session-Tokens.
 - Rollen- und Sichtbarkeitsmodell für Owner, GM, Player und Viewer.
 - Sichere Markdown-Verarbeitung mit serverseitiger HTML-Sanitization.
@@ -21,7 +22,7 @@
 ### Geändert
 
 - Das bisherige Flask/Static-Projekt wurde durch die Zielarchitektur Next.js + PostgreSQL + Drizzle + MinIO ersetzt.
-- Die Startanleitung ist jetzt konsequent auf `docker compose up -d` ausgerichtet; `.env` ist nur noch fuer eigene Produktions-Secrets erforderlich.
+- Die Startanleitung ist jetzt konsequent auf `.env`, `docker-compose.yml` und `docker compose up -d` ausgerichtet.
 - Docker Image Publishing referenziert die neue App-Architektur.
 
 ### Sicherheit
