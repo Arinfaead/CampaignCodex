@@ -4,9 +4,11 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
+import subprocess
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
@@ -22,6 +24,9 @@ from psycopg.rows import dict_row
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "static"
+APP_VERSION = os.environ.get("CAMPAIGN_CODEX_VERSION", "0.1.0-beta.1")
+APP_REPOSITORY = os.environ.get("CAMPAIGN_CODEX_REPOSITORY", "Arinfaead/CampaignCodex")
+LOG_FILE = Path(os.environ.get("CAMPAIGN_CODEX_LOG_FILE", str(ROOT / "data" / "campaigncodex.log")))
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql://campaign_codex:campaign_codex@localhost:5432/campaign_codex",
@@ -299,6 +304,15 @@ def migrate_schema(db: psycopg.Connection) -> None:
     )
     db.execute("CREATE INDEX IF NOT EXISTS page_mentions_source_idx ON page_mentions (source_page_id)")
     db.execute("CREATE INDEX IF NOT EXISTS page_mentions_target_idx ON page_mentions (target_page_id)")
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value JSONB NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
 
 
 def seed_database(db: psycopg.Connection, owner_user_id: int | None = None) -> int:
@@ -323,6 +337,9 @@ def seed_database(db: psycopg.Connection, owner_user_id: int | None = None) -> i
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
+
+    def log_message(self, format: str, *args: object) -> None:
+        logging.info("%s - %s", self.address_string(), format % args)
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -491,6 +508,13 @@ class Handler(SimpleHTTPRequestHandler):
                     self.send_json_error("Only admins and DMs can export campaigns.", HTTPStatus.FORBIDDEN)
                     return
                 self.send_json(export_campaign(db, campaign_id))
+                return
+
+            if path == "/api/admin/settings":
+                if user["global_role"] != "admin":
+                    self.send_json_error("Only admins can view system settings.", HTTPStatus.FORBIDDEN)
+                    return
+                self.send_json(admin_settings_payload(db))
                 return
 
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -734,6 +758,29 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 campaign_id = import_campaign(db, user, payload)
                 self.send_json({"id": campaign_id}, HTTPStatus.CREATED)
+                return
+
+            if path == "/api/admin/settings":
+                if user["global_role"] != "admin":
+                    self.send_json_error("Only admins can update system settings.", HTTPStatus.FORBIDDEN)
+                    return
+                settings = save_admin_settings(db, payload.get("settings", payload))
+                self.send_json({"settings": settings})
+                return
+
+            if path == "/api/admin/update-check":
+                if user["global_role"] != "admin":
+                    self.send_json_error("Only admins can check for updates.", HTTPStatus.FORBIDDEN)
+                    return
+                include_prereleases = bool(payload.get("include_prereleases", load_admin_settings(db)["general"]["include_beta_releases"]))
+                self.send_json(check_for_update(include_prereleases))
+                return
+
+            if path == "/api/admin/update":
+                if user["global_role"] != "admin":
+                    self.send_json_error("Only admins can trigger updates.", HTTPStatus.FORBIDDEN)
+                    return
+                self.send_json(run_update_command(db))
                 return
 
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -1704,6 +1751,186 @@ def import_campaign(db: psycopg.Connection, user: dict, payload: dict) -> int:
     return new_campaign_id
 
 
+def default_admin_settings() -> dict:
+    return {
+        "users": {
+            "local": {
+                "enabled": True,
+                "allow_admin_created_users": True,
+                "minimum_password_length": 8,
+                "session_days": SESSION_DAYS,
+                "password_reset_enabled": False,
+            },
+            "email": {
+                "enabled": False,
+                "smtp_host": "",
+                "smtp_port": 587,
+                "smtp_username": "",
+                "from_address": "",
+                "require_email_confirmation": False,
+                "magic_link_login": False,
+            },
+            "ldap": {
+                "enabled": False,
+                "server_url": "",
+                "bind_dn": "",
+                "base_dn": "",
+                "user_filter": "(mail={email})",
+                "group_filter": "",
+                "admin_group": "",
+                "dm_group": "",
+                "start_tls": True,
+            },
+            "two_factor": {
+                "enabled": False,
+                "required_for_admins": False,
+                "required_for_dms": False,
+                "issuer_name": "CampaignCodex",
+                "remember_device_days": 30,
+            },
+            "oidc": {
+                "enabled": oauth_enabled(),
+                "issuer": OIDC_ISSUER,
+                "client_id": OIDC_CLIENT_ID,
+                "redirect_uri": OIDC_REDIRECT_URI,
+                "admin_group": OIDC_ADMIN_GROUP,
+                "dm_group": OIDC_DM_GROUP,
+                "scopes": "openid email profile groups",
+            },
+        },
+        "general": {
+            "update_window": "Sonntag 03:00-04:00",
+            "include_beta_releases": True,
+            "update_command": os.environ.get("CAMPAIGN_CODEX_UPDATE_COMMAND", ""),
+        },
+    }
+
+
+def load_admin_settings(db: psycopg.Connection) -> dict:
+    settings = default_admin_settings()
+    row = db.execute("SELECT value FROM app_settings WHERE key = 'admin'").fetchone()
+    if row:
+        deep_update(settings, row["value"])
+    return settings
+
+
+def save_admin_settings(db: psycopg.Connection, payload: dict) -> dict:
+    settings = default_admin_settings()
+    deep_update(settings, payload if isinstance(payload, dict) else {})
+    settings["general"]["update_command"] = os.environ.get("CAMPAIGN_CODEX_UPDATE_COMMAND", "")
+    db.execute(
+        """
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES ('admin', %s::jsonb, %s)
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        """,
+        (json.dumps(settings), now()),
+    )
+    return settings
+
+
+def deep_update(target: dict, source: dict) -> dict:
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            deep_update(target[key], value)
+        elif key in target:
+            target[key] = value
+    return target
+
+
+def admin_settings_payload(db: psycopg.Connection) -> dict:
+    settings = load_admin_settings(db)
+    return {
+        "settings": settings,
+        "runtime": {
+            "version": APP_VERSION,
+            "repository": APP_REPOSITORY,
+            "oauth_enabled": oauth_enabled(),
+            "log_file": str(LOG_FILE),
+            "log": read_log_tail(),
+        },
+    }
+
+
+def read_log_tail(max_lines: int = 240) -> str:
+    if not LOG_FILE.exists():
+        return "Noch keine Logdatei vorhanden."
+    try:
+        lines = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as error:
+        return f"Logdatei konnte nicht gelesen werden: {error}"
+    return "\n".join(lines[-max_lines:]) or "Logdatei ist leer."
+
+
+def check_for_update(include_prereleases: bool) -> dict:
+    url = f"https://api.github.com/repos/{APP_REPOSITORY}/releases"
+    request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "CampaignCodex"})
+    try:
+        with urlopen(request, timeout=12) as response:
+            releases = json.loads(response.read().decode("utf-8"))
+    except Exception as error:
+        return {
+            "ok": False,
+            "current_version": APP_VERSION,
+            "message": f"Release-Check fehlgeschlagen: {error}",
+        }
+    candidates = [
+        release for release in releases
+        if not release.get("draft") and (include_prereleases or not release.get("prerelease"))
+    ]
+    latest = candidates[0] if candidates else None
+    if not latest:
+        return {
+            "ok": True,
+            "current_version": APP_VERSION,
+            "latest_version": None,
+            "update_available": False,
+            "message": "Keine passenden Releases gefunden.",
+        }
+    latest_version = str(latest.get("tag_name", "")).lstrip("v")
+    return {
+        "ok": True,
+        "current_version": APP_VERSION,
+        "latest_version": latest_version,
+        "update_available": version_key(latest_version) > version_key(APP_VERSION),
+        "prerelease": bool(latest.get("prerelease")),
+        "url": latest.get("html_url"),
+        "message": latest.get("name") or latest.get("tag_name"),
+    }
+
+
+def version_key(value: str) -> tuple:
+    raw = clean(value).lstrip("v")
+    base, _, suffix = raw.partition("-")
+    numbers = tuple(int(part) for part in re.findall(r"\d+", base)[:3])
+    numbers = numbers + (0,) * (3 - len(numbers))
+    prerelease_rank = 0 if suffix else 1
+    suffix_numbers = tuple(int(part) for part in re.findall(r"\d+", suffix))
+    return (*numbers, prerelease_rank, *suffix_numbers)
+
+
+def run_update_command(db: psycopg.Connection) -> dict:
+    command = clean(os.environ.get("CAMPAIGN_CODEX_UPDATE_COMMAND"))
+    if not command:
+        return {
+            "ok": False,
+            "message": "Kein Update-Befehl konfiguriert. Hinterlege einen Befehl in den allgemeinen Einstellungen.",
+        }
+    try:
+        result = subprocess.run(command, shell=True, cwd=str(ROOT), capture_output=True, text=True, timeout=600, check=False)
+    except Exception as error:
+        logging.exception("CampaignCodex update command failed before execution")
+        return {"ok": False, "message": str(error)}
+    logging.info("CampaignCodex update command exited with code %s", result.returncode)
+    return {
+        "ok": result.returncode == 0,
+        "exit_code": result.returncode,
+        "stdout": result.stdout[-6000:],
+        "stderr": result.stderr[-6000:],
+        "message": "Update-Befehl ausgeführt." if result.returncode == 0 else "Update-Befehl ist fehlgeschlagen.",
+    }
+
+
 def upsert_oauth_user(db: psycopg.Connection, userinfo: dict) -> dict:
     subject = str(userinfo["sub"])
     email = clean(userinfo.get("email")).lower()
@@ -1845,10 +2072,17 @@ def sql_tuple(values: tuple[str, ...]) -> str:
 
 
 def main() -> None:
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=str(LOG_FILE),
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
     init_db()
     port = int(os.environ.get("PORT", "8080"))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"CampaignCodex listening on http://0.0.0.0:{port}")
+    logging.info("CampaignCodex %s listening on http://0.0.0.0:%s", APP_VERSION, port)
+    print(f"CampaignCodex {APP_VERSION} listening on http://0.0.0.0:{port}")
     server.serve_forever()
 
 

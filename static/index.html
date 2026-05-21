@@ -86,6 +86,11 @@
           <div id="sectionNav" class="section-nav"></div>
         </section>
 
+        <section id="adminSettingsNav" class="hidden">
+          <h2>Administration</h2>
+          <button id="adminSettingsButton" class="section-link" data-tab="adminSettings">Einstellungen</button>
+        </section>
+
         <section class="members">
           <div class="section-heading">
             <h2>Mitglieder</h2>
@@ -124,7 +129,7 @@
           <button id="dmTab" class="tab" data-tab="dm">DM-Bereich</button>
           <button class="tab" data-tab="notes">Notizen</button>
           <button class="tab" data-tab="search">Suche</button>
-          <button class="tab" data-tab="settings">Einstellungen</button>
+          <button class="tab" data-tab="settings">Kampagne</button>
         </nav>
 
         <section id="wikiView" class="panel active">
@@ -201,6 +206,71 @@
                 <input id="importFile" type="file" accept="application/json">
               </label>
               <button id="importButton">Kampagne importieren</button>
+            </div>
+          </section>
+        </section>
+
+        <section id="adminSettingsView" class="panel admin-settings">
+          <header class="settings-header">
+            <div>
+              <p class="eyebrow">Administration</p>
+              <h2>Systemeinstellungen</h2>
+              <p class="muted">Instanzweite Authentifizierung, Logs und Updates.</p>
+            </div>
+            <button id="saveAdminSettingsButton">Speichern</button>
+          </header>
+
+          <nav class="subtabs full-span" aria-label="Administration">
+            <button class="subtab active" type="button" data-settings-tab="users">Benutzerverwaltung</button>
+            <button class="subtab" type="button" data-settings-tab="logs">Log</button>
+            <button class="subtab" type="button" data-settings-tab="general">Allgemein</button>
+          </nav>
+
+          <section class="settings-section full-span admin-tab-panel active" data-settings-panel="users">
+            <h2>Benutzerverwaltung</h2>
+            <nav class="subtabs" aria-label="Benutzerverwaltung">
+              <button class="subtab active" type="button" data-admin-tab="local">Lokale Authentifizierung</button>
+              <button class="subtab" type="button" data-admin-tab="email">E-Mail-Authentifizierung</button>
+              <button class="subtab" type="button" data-admin-tab="ldap">LDAP</button>
+              <button class="subtab" type="button" data-admin-tab="twoFactor">Zwei Faktor</button>
+              <button class="subtab" type="button" data-admin-tab="oidc">SSO/OIDC</button>
+            </nav>
+            <div id="adminAuthPanels"></div>
+          </section>
+
+          <section class="settings-section full-span admin-tab-panel" data-settings-panel="logs">
+            <div class="section-heading">
+              <h2>Log</h2>
+              <button id="refreshLogButton" class="secondary" type="button">Aktualisieren</button>
+            </div>
+            <p id="logPath" class="muted"></p>
+            <pre id="logOutput" class="log-output">Log wird geladen...</pre>
+          </section>
+
+          <section class="settings-section full-span admin-tab-panel" data-settings-panel="general">
+            <h2>Allgemeine Einstellungen</h2>
+            <div class="stack">
+              <label>
+                Automatisches Updatefenster
+                <input id="updateWindowInput" placeholder="Sonntag 03:00-04:00">
+              </label>
+              <label>
+                Installierte Version
+                <input id="installedVersionInput" readonly>
+              </label>
+              <label class="check">
+                <input id="includeBetaInput" type="checkbox">
+                Beta-Versionen beim Check einbeziehen
+              </label>
+              <label>
+                Serverseitiger Update-Befehl
+                <input id="updateCommandInput" readonly placeholder="per CAMPAIGN_CODEX_UPDATE_COMMAND konfigurieren">
+              </label>
+              <div class="dialog-actions">
+                <button id="checkUpdateButton" class="secondary" type="button">Auf Updates prüfen</button>
+                <button id="runUpdateButton" type="button">CampaignCodex updaten</button>
+              </div>
+              <div id="updateStatus" class="notice subtle hidden"></div>
             </div>
           </section>
         </section>

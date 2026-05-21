@@ -3,6 +3,9 @@ const state = {
   campaigns: [],
   campaignId: null,
   data: null,
+  adminSettings: null,
+  adminSettingsTab: "users",
+  adminAuthTab: "local",
   activeSection: "all",
   inviteToken: new URLSearchParams(location.search).get("invite"),
 };
@@ -92,6 +95,7 @@ function showApp() {
   $("authView").classList.add("hidden");
   $("appView").classList.remove("hidden");
   $("currentUser").textContent = `${state.user.display_name} · ${state.user.global_role}`;
+  $("adminSettingsNav").classList.toggle("hidden", state.user.global_role !== "admin");
 }
 
 function renderStaticOptions() {
@@ -121,6 +125,7 @@ async function loadCampaign() {
     $("notes").innerHTML = "";
     $("searchResults").innerHTML = "";
     document.querySelector('[data-tab="settings"]').style.display = "none";
+    $("adminSettingsNav").classList.toggle("hidden", state.user?.global_role !== "admin");
     return;
   }
   state.data = await api(`/api/campaign?campaign_id=${state.campaignId}`);
@@ -137,6 +142,7 @@ function renderCampaign() {
   $("newNoteButton").style.display = membership ? "inline-flex" : "none";
   $("addMemberButton").style.display = canManage() ? "inline-grid" : "none";
   $("dmTab").style.display = canManage() ? "inline-flex" : "none";
+  $("adminSettingsNav").classList.toggle("hidden", state.user.global_role !== "admin");
   if (!canManage() && $("dmView").classList.contains("active")) activateTab("wiki");
 
   $("members").innerHTML = members.map((member) => `<div class="member"><span>${escapeHtml(member.display_name)}</span><span class="role">${member.role}</span></div>`).join("");
@@ -319,7 +325,7 @@ function openNoteEditor(id = null) {
 }
 
 function renderReaderList(pageId = null) {
-  const selected = new Set((state.data.page_readers[String(pageId)] || []).map(String));
+  const selected = new Set(((state.data.page_readers || {})[String(pageId)] || []).map(String));
   $("readerList").innerHTML = state.data.members
     .filter((member) => member.role === "player")
     .map((member) => `<label class="check"><input type="checkbox" value="${member.id}" ${selected.has(String(member.id)) ? "checked" : ""}> ${escapeHtml(member.display_name)}</label>`)
@@ -489,6 +495,202 @@ function renderSettings() {
   if (!canManage()) return;
   $("inviteList").innerHTML = state.data.invites.map((invite) => `<div class="member"><span>${escapeHtml(invite.invited_email || "Offener Link")}</span><span>${invite.accepted_at ? "angenommen" : invite.role}</span></div>`).join("");
   $("userList").innerHTML = state.data.users.map((user) => `<div class="member"><span>${escapeHtml(user.display_name)}</span><span>${escapeHtml(user.global_role)}</span></div>`).join("");
+}
+
+async function loadAdminSettings() {
+  if (state.user?.global_role !== "admin") return;
+  state.adminSettings = await api("/api/admin/settings");
+  renderAdminSettings();
+}
+
+function renderAdminSettings() {
+  const payload = state.adminSettings;
+  if (!payload) return;
+  const settings = payload.settings;
+  const runtime = payload.runtime;
+  $("installedVersionInput").value = runtime.version;
+  $("updateWindowInput").value = settings.general.update_window || "";
+  $("includeBetaInput").checked = Boolean(settings.general.include_beta_releases);
+  $("updateCommandInput").value = settings.general.update_command || "";
+  $("logPath").textContent = runtime.log_file;
+  $("logOutput").textContent = runtime.log || "Keine Logs vorhanden.";
+  renderAdminAuthPanels(settings.users);
+  activateAdminSettingsTab(state.adminSettingsTab);
+}
+
+function renderAdminAuthPanels(users) {
+  const panels = {
+    local: `
+      <div class="admin-auth-panel active" data-admin-panel="local">
+        <div class="form-grid">
+          ${toggleField("localEnabled", "Lokale Anmeldung aktivieren", users.local.enabled)}
+          ${toggleField("localAdminCreated", "Nur durch Admins angelegte Benutzer", users.local.allow_admin_created_users)}
+          ${numberField("localMinPassword", "Minimale Passwortlänge", users.local.minimum_password_length)}
+          ${numberField("localSessionDays", "Session-Laufzeit in Tagen", users.local.session_days)}
+          ${toggleField("localPasswordReset", "Passwort-Reset vorbereiten", users.local.password_reset_enabled)}
+        </div>
+      </div>`,
+    email: `
+      <div class="admin-auth-panel" data-admin-panel="email">
+        <div class="form-grid">
+          ${toggleField("emailEnabled", "E-Mail-Authentifizierung aktivieren", users.email.enabled)}
+          ${textField("smtpHost", "SMTP Host", users.email.smtp_host)}
+          ${numberField("smtpPort", "SMTP Port", users.email.smtp_port)}
+          ${textField("smtpUsername", "SMTP Benutzername", users.email.smtp_username)}
+          ${textField("smtpFrom", "Absenderadresse", users.email.from_address)}
+          ${toggleField("emailConfirmation", "E-Mail-Bestätigung verlangen", users.email.require_email_confirmation)}
+          ${toggleField("magicLinkLogin", "Magic-Link-Login erlauben", users.email.magic_link_login)}
+        </div>
+      </div>`,
+    ldap: `
+      <div class="admin-auth-panel" data-admin-panel="ldap">
+        <div class="form-grid">
+          ${toggleField("ldapEnabled", "LDAP aktivieren", users.ldap.enabled)}
+          ${textField("ldapServer", "LDAP Server URL", users.ldap.server_url)}
+          ${textField("ldapBindDn", "Bind DN", users.ldap.bind_dn)}
+          ${textField("ldapBaseDn", "Base DN", users.ldap.base_dn)}
+          ${textField("ldapUserFilter", "User Filter", users.ldap.user_filter)}
+          ${textField("ldapGroupFilter", "Group Filter", users.ldap.group_filter)}
+          ${textField("ldapAdminGroup", "Admin-Gruppe", users.ldap.admin_group)}
+          ${textField("ldapDmGroup", "DM-Gruppe", users.ldap.dm_group)}
+          ${toggleField("ldapStartTls", "StartTLS verwenden", users.ldap.start_tls)}
+        </div>
+      </div>`,
+    twoFactor: `
+      <div class="admin-auth-panel" data-admin-panel="twoFactor">
+        <div class="form-grid">
+          ${toggleField("twoFactorEnabled", "Zwei Faktor-Authentifizierung aktivieren", users.two_factor.enabled)}
+          ${toggleField("twoFactorAdmins", "Für Admins erzwingen", users.two_factor.required_for_admins)}
+          ${toggleField("twoFactorDms", "Für DMs erzwingen", users.two_factor.required_for_dms)}
+          ${textField("twoFactorIssuer", "TOTP Issuer Name", users.two_factor.issuer_name)}
+          ${numberField("twoFactorRememberDays", "Gerät merken in Tagen", users.two_factor.remember_device_days)}
+        </div>
+      </div>`,
+    oidc: `
+      <div class="admin-auth-panel" data-admin-panel="oidc">
+        <div class="form-grid">
+          ${toggleField("oidcEnabled", "SSO/OIDC aktivieren", users.oidc.enabled)}
+          ${textField("oidcIssuer", "Issuer URL", users.oidc.issuer)}
+          ${textField("oidcClientId", "Client ID", users.oidc.client_id)}
+          ${textField("oidcRedirectUri", "Redirect URI", users.oidc.redirect_uri)}
+          ${textField("oidcScopes", "Scopes", users.oidc.scopes)}
+          ${textField("oidcAdminGroup", "Admin-Gruppe", users.oidc.admin_group)}
+          ${textField("oidcDmGroup", "DM-Gruppe", users.oidc.dm_group)}
+        </div>
+      </div>`,
+  };
+  $("adminAuthPanels").innerHTML = Object.values(panels).join("");
+  activateAdminSubtab(state.adminAuthTab);
+}
+
+function textField(id, label, value = "") {
+  return `<label>${label}<input id="${id}" value="${escapeHtml(value)}"></label>`;
+}
+
+function numberField(id, label, value = 0) {
+  return `<label>${label}<input id="${id}" type="number" min="0" value="${escapeHtml(value)}"></label>`;
+}
+
+function toggleField(id, label, checked = false) {
+  return `<label class="check"><input id="${id}" type="checkbox" ${checked ? "checked" : ""}> ${label}</label>`;
+}
+
+function collectAdminSettings() {
+  return {
+    users: {
+      local: {
+        enabled: $("localEnabled").checked,
+        allow_admin_created_users: $("localAdminCreated").checked,
+        minimum_password_length: Number($("localMinPassword").value || 8),
+        session_days: Number($("localSessionDays").value || 14),
+        password_reset_enabled: $("localPasswordReset").checked,
+      },
+      email: {
+        enabled: $("emailEnabled").checked,
+        smtp_host: $("smtpHost").value,
+        smtp_port: Number($("smtpPort").value || 587),
+        smtp_username: $("smtpUsername").value,
+        from_address: $("smtpFrom").value,
+        require_email_confirmation: $("emailConfirmation").checked,
+        magic_link_login: $("magicLinkLogin").checked,
+      },
+      ldap: {
+        enabled: $("ldapEnabled").checked,
+        server_url: $("ldapServer").value,
+        bind_dn: $("ldapBindDn").value,
+        base_dn: $("ldapBaseDn").value,
+        user_filter: $("ldapUserFilter").value,
+        group_filter: $("ldapGroupFilter").value,
+        admin_group: $("ldapAdminGroup").value,
+        dm_group: $("ldapDmGroup").value,
+        start_tls: $("ldapStartTls").checked,
+      },
+      two_factor: {
+        enabled: $("twoFactorEnabled").checked,
+        required_for_admins: $("twoFactorAdmins").checked,
+        required_for_dms: $("twoFactorDms").checked,
+        issuer_name: $("twoFactorIssuer").value,
+        remember_device_days: Number($("twoFactorRememberDays").value || 30),
+      },
+      oidc: {
+        enabled: $("oidcEnabled").checked,
+        issuer: $("oidcIssuer").value,
+        client_id: $("oidcClientId").value,
+        redirect_uri: $("oidcRedirectUri").value,
+        scopes: $("oidcScopes").value,
+        admin_group: $("oidcAdminGroup").value,
+        dm_group: $("oidcDmGroup").value,
+      },
+    },
+    general: {
+      update_window: $("updateWindowInput").value,
+      include_beta_releases: $("includeBetaInput").checked,
+      update_command: state.adminSettings?.settings?.general?.update_command || "",
+    },
+  };
+}
+
+async function saveAdminSettings() {
+  state.adminSettings = await api("/api/admin/settings", { method: "POST", body: JSON.stringify({ settings: collectAdminSettings() }) });
+  state.adminSettings.runtime = (await api("/api/admin/settings")).runtime;
+  renderAdminSettings();
+  showUpdateStatus("Einstellungen gespeichert.");
+}
+
+async function refreshAdminLog() {
+  await loadAdminSettings();
+}
+
+async function checkUpdate() {
+  const result = await api("/api/admin/update-check", { method: "POST", body: JSON.stringify({ include_prereleases: $("includeBetaInput").checked }) });
+  const message = result.update_available
+    ? `Update verfügbar: ${result.current_version} -> ${result.latest_version}`
+    : result.message || `Kein Update verfügbar. Aktuell: ${result.current_version}`;
+  showUpdateStatus(message, !result.ok);
+}
+
+async function runUpdate() {
+  const result = await api("/api/admin/update", { method: "POST", body: "{}" });
+  showUpdateStatus(`${result.message}${result.exit_code !== undefined ? ` Exit ${result.exit_code}.` : ""}`, !result.ok);
+  await loadAdminSettings();
+}
+
+function showUpdateStatus(message, isError = false) {
+  $("updateStatus").textContent = message;
+  $("updateStatus").classList.toggle("hidden", false);
+  $("updateStatus").classList.toggle("error", isError);
+}
+
+function activateAdminSubtab(tabName) {
+  state.adminAuthTab = tabName;
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => button.classList.toggle("active", button.dataset.adminTab === tabName));
+  document.querySelectorAll(".admin-auth-panel").forEach((panel) => panel.classList.toggle("active", panel.dataset.adminPanel === tabName));
+}
+
+function activateAdminSettingsTab(tabName) {
+  state.adminSettingsTab = tabName;
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => button.classList.toggle("active", button.dataset.settingsTab === tabName));
+  document.querySelectorAll("[data-settings-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.settingsPanel === tabName));
 }
 
 async function createInvite(event) {
@@ -666,6 +868,24 @@ $("inviteForm").addEventListener("submit", createInvite);
 $("userForm").addEventListener("submit", createUser);
 $("exportButton").addEventListener("click", exportCampaign);
 $("importButton").addEventListener("click", importCampaign);
+$("adminSettingsButton").addEventListener("click", async () => {
+  activateTab("adminSettings");
+  await loadAdminSettings();
+});
+$("saveAdminSettingsButton").addEventListener("click", saveAdminSettings);
+$("refreshLogButton").addEventListener("click", refreshAdminLog);
+$("checkUpdateButton").addEventListener("click", checkUpdate);
+$("runUpdateButton").addEventListener("click", runUpdate);
+$("adminAuthPanels").addEventListener("input", () => $("updateStatus").classList.add("hidden"));
+$("adminSettingsView").addEventListener("click", (event) => {
+  const settingsButton = event.target.closest("[data-settings-tab]");
+  if (settingsButton) {
+    activateAdminSettingsTab(settingsButton.dataset.settingsTab);
+    return;
+  }
+  const button = event.target.closest("[data-admin-tab]");
+  if (button) activateAdminSubtab(button.dataset.adminTab);
+});
 $("searchInput").addEventListener("input", () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(runSearch, 250);
@@ -675,9 +895,10 @@ document.querySelectorAll(".tab").forEach((button) => button.addEventListener("c
 
 function activateTab(tabName) {
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
+  document.querySelectorAll(".section-link[data-tab]").forEach((tab) => tab.classList.remove("active"));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
-  document.querySelector(`[data-tab="${tabName}"]`).classList.add("active");
-  $(`${tabName}View`).classList.add("active");
+  document.querySelector(`[data-tab="${tabName}"]`)?.classList.add("active");
+  $(`${tabName}View`)?.classList.add("active");
 }
 
 init().catch((error) => {

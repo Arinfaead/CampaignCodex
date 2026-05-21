@@ -100,6 +100,33 @@ button.secondary {
   margin-top: 24px;
 }
 
+.admin-settings {
+  display: none;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 18px;
+}
+
+.admin-settings.active {
+  display: grid;
+}
+
+.settings-header,
+.full-span {
+  grid-column: 1 / -1;
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  background: white;
+  box-shadow: var(--shadow);
+}
+
 .setup-mode .auth-grid {
   grid-template-columns: minmax(0, 520px);
   justify-content: center;
@@ -359,6 +386,49 @@ textarea {
   margin: 24px 0;
 }
 
+.subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.subtab {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: white;
+  box-shadow: none;
+}
+
+.subtab.active {
+  border-color: transparent;
+  color: white;
+  background: linear-gradient(135deg, var(--teal), var(--teal-dark));
+}
+
+.admin-auth-panel {
+  display: none;
+}
+
+.admin-auth-panel.active {
+  display: block;
+}
+
+.admin-tab-panel {
+  display: none;
+}
+
+.admin-tab-panel.active {
+  display: grid;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .tab {
   color: var(--ink);
   background: white;
@@ -378,6 +448,10 @@ textarea {
 
 .panel.active {
   display: block;
+}
+
+.panel.admin-settings.active {
+  display: grid;
 }
 
 .grid {
@@ -645,6 +719,34 @@ dialog::backdrop {
   background: #fff7d7;
 }
 
+.notice.subtle {
+  display: block;
+  border-color: #cfe1de;
+  color: var(--teal-dark);
+  background: #eef7f6;
+}
+
+.notice.error {
+  border-color: #e7b8ae;
+  color: var(--accent-dark);
+  background: #fff0ed;
+}
+
+.log-output {
+  min-height: 360px;
+  max-height: 520px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  color: #dce8ec;
+  background: #101820;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 .empty {
   grid-column: 1 / -1;
   padding: 24px;
@@ -681,6 +783,8 @@ dialog::backdrop {
 
   .auth-grid,
   .settings-grid,
+  .admin-settings,
+  .form-grid,
   .option-row,
   .markdown-grid,
   .entity-graph-grid {

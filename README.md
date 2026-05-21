@@ -16,6 +16,7 @@ CampaignCodex ist ein kleines Open-Source-MVP für D&D Dungeon Master und Spiele
 - Berechtigungsgebundene Volltextsuche
 - Dateianhänge und Bilder pro Seite oder Session-Notiz
 - Export und Import ganzer Kampagnen
+- Admin-Systemeinstellungen für Authentifizierung, Logs und Updates
 - PostgreSQL-Persistenz
 - Docker-Compose-Setup mit fertigem App-Image und PostgreSQL-Datenbank
 
@@ -118,6 +119,7 @@ OIDC_CLIENT_SECRET=dein-client-secret
 OIDC_REDIRECT_URI=https://deine-campaigncodex-domain.example/api/auth/oauth/callback
 OIDC_ADMIN_GROUP=CampaignCodex Admins
 OIDC_DM_GROUP=CampaignCodex DMs
+CAMPAIGN_CODEX_UPDATE_COMMAND=
 ```
 
 Danach neu starten:
@@ -177,6 +179,20 @@ Die Suchleiste durchsucht Wiki-Seiten und Notizen, zeigt aber nur Ergebnisse an,
 
 DMs und Admins können Kampagnen in den Einstellungen als JSON exportieren und später wieder importieren. Exportiert werden Kampagne, Wiki-Seiten, Notizen, Mitgliedschaften und Anhänge.
 
+## Admin-Systemeinstellungen
+
+Admins sehen in der linken Navigation unter den Wiki-Abschnitten einen eigenen Bereich `Administration`. Dort liegen instanzweite Einstellungen:
+
+- Benutzerverwaltung für lokale Anmeldung, E-Mail-Authentifizierung, LDAP, Zwei-Faktor-Authentifizierung und SSO/OIDC.
+- Log-Ansicht für die aktuelle CampaignCodex-Logdatei.
+- Allgemeine Einstellungen mit installiertem Versionsstand, Updatefenster, Beta-Release-Check und Update-Button.
+
+Der Update-Button führt aus Sicherheitsgründen nur den serverseitig konfigurierten Befehl aus. Hinterlege ihn per `.env`, zum Beispiel:
+
+```env
+CAMPAIGN_CODEX_UPDATE_COMMAND=docker compose pull && docker compose up -d
+```
+
 ## Image
 
 Das App-Image wird automatisch über GitHub Actions gebaut und in der GitHub Container Registry veröffentlicht:
@@ -186,6 +202,17 @@ ghcr.io/arinfaead/campaigncodex:latest
 ```
 
 Für normale Installation reicht die [docker-compose.yml](docker-compose.yml). Der Quellcode und das `Dockerfile` werden nur benötigt, wenn du selbst ein Image bauen oder entwickeln möchtest.
+
+## Releases
+
+CampaignCodex nutzt während der Beta SemVer-Tags mit `0.x`, zum Beispiel:
+
+```bash
+git tag v0.1.0-beta.1
+git push origin v0.1.0-beta.1
+```
+
+Ein Tag mit `v*` erstellt automatisch ein GitHub Release. Tags mit `beta`, `alpha` oder `rc` werden als Prerelease markiert. Zusätzlich wird das Docker-Image mit dem Release-Tag veröffentlicht.
 
 ## Projektstruktur
 
