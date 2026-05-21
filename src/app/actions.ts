@@ -12,56 +12,44 @@ import {
   campaignMembers,
   campaigns,
   users,
-  wikiPages,
-  type CampaignRole,
-  type PageVisibility
+  wikiPages
 } from "@/db/schema";
 import { createSession, deleteCurrentSession, requireUser } from "@/lib/auth";
+import { getCampaignMembership } from "@/lib/campaign-access";
 import { env } from "@/lib/env";
 import { canManageCampaign, canWriteContent } from "@/lib/permissions";
 import { addDays, createSecretToken, hashPassword, hashToken, normalizeEmail, verifyPassword } from "@/lib/security";
 import { cleanFileName, putCampaignObject } from "@/lib/storage";
 import { slugify } from "@/lib/slugs";
-
-const campaignRoles = new Set<CampaignRole>(["owner", "gm", "player", "viewer"]);
-const pageVisibilities = new Set<PageVisibility>(["public", "campaign", "gm", "private"]);
-
-function readString(formData: FormData, key: string) {
-  const value = formData.get(key);
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function assertRole(value: string): CampaignRole {
-  return campaignRoles.has(value as CampaignRole) ? (value as CampaignRole) : "player";
-}
-
-function assertVisibility(value: string): PageVisibility {
-  return pageVisibilities.has(value as PageVisibility) ? (value as PageVisibility) : "campaign";
-}
-
-async function getCampaignMembership(campaignId: string, userId: string) {
-  const [membership] = await db
-    .select()
-    .from(campaignMembers)
-    .where(and(eq(campaignMembers.campaignId, campaignId), eq(campaignMembers.userId, userId)))
-    .limit(1);
-
-  return membership ?? null;
-}
+import {
+  acceptInviteSchema,
+  createCampaignSchema,
+  createInviteSchema,
+  createPageSchema,
+  parseForm,
+  signInSchema,
+  signUpSchema,
+  updatePageSchema,
+  uploadAssetSchema
+} from "@/lib/validation";
 
 export async function signUpAction(formData: FormData) {
-  const email = normalizeEmail(readString(formData, "email"));
-  const displayName = readString(formData, "displayName");
-  const password = readString(formData, "password");
+  const parsed = parseForm(signUpSchema, formData);
 
-  if (!email || !displayName || password.length < 12) {
+  if (!parsed.success) {
     redirect("/auth/sign-up?error=invalid");
   }
 
+  const { email, displayName, password } = parsed.data;
   const [{ value: userCount }] = await db.select({ value: count() }).from(users);
 
   if (!env.ALLOW_REGISTRATION && userCount > 0) {
     redirect("/auth/sign-in?error=registration-closed");
+  }
+
+  const [existingUser] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+  if (existingUser) {
+    redirect("/auth/sign-up?error=email-exists");
   }
 
   const [createdUser] = await db
@@ -70,17 +58,23 @@ export async function signUpAction(formData: FormData) {
       email,
       displayName,
       passwordHash: await hashPassword(password),
-      role: userCount === 0 ? "admin" : "member"
+      role: userCount === 0 ? "instance_admin" : "user"
     })
     .returning();
 
   await createSession(createdUser.id);
-  redirect("/");
+  redirect("/dashboard");
 }
 
 export async function signInAction(formData: FormData) {
-  const email = normalizeEmail(readString(formData, "email"));
-  const password = readString(formData, "password");
+  const parsed = parseForm(signInSchema, formData);
+
+  if (!parsed.success) {
+    redirect("/auth/sign-in?error=invalid");
+  }
+
+  const email = normalizeEmail(parsed.data.email);
+  const password = parsed.data.password;
   const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
 
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
@@ -88,7 +82,7 @@ export async function signInAction(formData: FormData) {
   }
 
   await createSession(user.id);
-  redirect("/");
+  redirect("/dashboard");
 }
 
 export async function signOutAction() {
@@ -98,30 +92,31 @@ export async function signOutAction() {
 
 export async function createCampaignAction(formData: FormData) {
   const user = await requireUser();
-  const name = readString(formData, "name");
-  const description = readString(formData, "description");
+  const parsed = parseForm(createCampaignSchema, formData);
 
-  if (!name) {
+  if (!parsed.success) {
     redirect("/campaigns/new?error=missing-name");
   }
 
+  const { name, description, visibility } = parsed.data;
   const baseSlug = slugify(name);
   const slug = `${baseSlug}-${randomUUID().slice(0, 8)}`;
 
   const [campaign] = await db
     .insert(campaigns)
     .values({
-      ownerId: user.id,
+      createdByUserId: user.id,
       name,
       slug,
-      description
+      description,
+      visibility
     })
     .returning();
 
   await db.insert(campaignMembers).values({
     campaignId: campaign.id,
     userId: user.id,
-    role: "owner"
+    role: "campaign_admin"
   });
 
   redirect(`/campaigns/${campaign.slug}`);
@@ -129,14 +124,16 @@ export async function createCampaignAction(formData: FormData) {
 
 export async function createPageAction(formData: FormData) {
   const user = await requireUser();
-  const campaignId = readString(formData, "campaignId");
-  const campaignSlug = readString(formData, "campaignSlug");
-  const title = readString(formData, "title");
-  const content = readString(formData, "content");
-  const visibility = assertVisibility(readString(formData, "visibility"));
+  const parsed = parseForm(createPageSchema, formData);
+
+  if (!parsed.success) {
+    redirect("/dashboard");
+  }
+
+  const { campaignId, campaignSlug, title, content, visibility } = parsed.data;
   const membership = await getCampaignMembership(campaignId, user.id);
 
-  if (!membership || !canWriteContent(membership.role) || !title) {
+  if (!membership || !canWriteContent(membership.role)) {
     redirect(`/campaigns/${campaignSlug}`);
   }
 
@@ -157,16 +154,16 @@ export async function createPageAction(formData: FormData) {
 
 export async function updatePageAction(formData: FormData) {
   const user = await requireUser();
-  const pageId = readString(formData, "pageId");
-  const campaignSlug = readString(formData, "campaignSlug");
-  const pageSlug = readString(formData, "pageSlug");
-  const campaignId = readString(formData, "campaignId");
-  const title = readString(formData, "title");
-  const content = readString(formData, "content");
-  const visibility = assertVisibility(readString(formData, "visibility"));
+  const parsed = parseForm(updatePageSchema, formData);
+
+  if (!parsed.success) {
+    redirect("/dashboard");
+  }
+
+  const { pageId, campaignSlug, pageSlug, campaignId, title, content, visibility } = parsed.data;
   const membership = await getCampaignMembership(campaignId, user.id);
 
-  if (!membership || !canWriteContent(membership.role) || !title) {
+  if (!membership || !canWriteContent(membership.role)) {
     redirect(`/campaigns/${campaignSlug}/pages/${pageSlug}`);
   }
 
@@ -187,13 +184,17 @@ export async function updatePageAction(formData: FormData) {
 
 export async function createInviteAction(formData: FormData) {
   const user = await requireUser();
-  const campaignId = readString(formData, "campaignId");
-  const campaignSlug = readString(formData, "campaignSlug");
-  const email = normalizeEmail(readString(formData, "email"));
-  const role = assertRole(readString(formData, "role"));
+  const parsed = parseForm(createInviteSchema, formData);
+
+  if (!parsed.success) {
+    redirect("/dashboard");
+  }
+
+  const { campaignId, campaignSlug, role } = parsed.data;
+  const email = normalizeEmail(parsed.data.email);
   const membership = await getCampaignMembership(campaignId, user.id);
 
-  if (!membership || !canManageCampaign(membership.role) || !email || role === "owner") {
+  if (!membership || !canManageCampaign(membership.role)) {
     redirect(`/campaigns/${campaignSlug}/settings`);
   }
 
@@ -212,7 +213,13 @@ export async function createInviteAction(formData: FormData) {
 
 export async function acceptInviteAction(formData: FormData) {
   const user = await requireUser();
-  const token = readString(formData, "token");
+  const parsed = parseForm(acceptInviteSchema, formData);
+
+  if (!parsed.success) {
+    redirect("/dashboard");
+  }
+
+  const { token } = parsed.data;
   const tokenHash = hashToken(token);
 
   const [invite] = await db
@@ -253,9 +260,13 @@ export async function acceptInviteAction(formData: FormData) {
 
 export async function uploadAssetAction(formData: FormData) {
   const user = await requireUser();
-  const campaignId = readString(formData, "campaignId");
-  const campaignSlug = readString(formData, "campaignSlug");
-  const visibility = assertVisibility(readString(formData, "visibility"));
+  const parsed = parseForm(uploadAssetSchema, formData);
+
+  if (!parsed.success) {
+    redirect("/dashboard");
+  }
+
+  const { campaignId, campaignSlug, visibility } = parsed.data;
   const membership = await getCampaignMembership(campaignId, user.id);
   const file = formData.get("file");
 

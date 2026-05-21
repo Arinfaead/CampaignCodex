@@ -1,9 +1,10 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 
 import { db } from "@/db";
-import { assets, campaignMembers } from "@/db/schema";
+import { assets } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { getCampaignMembership } from "@/lib/campaign-access";
 import { getCampaignObject } from "@/lib/storage";
 import { canReadVisibility } from "@/lib/permissions";
 
@@ -20,11 +21,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ ass
     notFound();
   }
 
-  const [userMembership] = await db
-    .select()
-    .from(campaignMembers)
-    .where(and(eq(campaignMembers.campaignId, asset.campaignId), eq(campaignMembers.userId, user.id)))
-    .limit(1);
+  const userMembership = await getCampaignMembership(asset.campaignId, user.id);
 
   if (!userMembership || !canReadVisibility(userMembership.role, asset.visibility, asset.uploadedById === user.id)) {
     return new Response("Forbidden", { status: 403 });

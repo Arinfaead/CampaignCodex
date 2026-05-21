@@ -1,24 +1,18 @@
 import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { Download, Upload } from "lucide-react";
-import { notFound } from "next/navigation";
 
 import { uploadAssetAction } from "@/app/actions";
 import { db } from "@/db";
 import { assets } from "@/db/schema";
 import { VisibilitySelect } from "@/components/VisibilitySelect";
-import { requireUser } from "@/lib/auth";
-import { getCampaignForUser } from "@/lib/campaign-access";
+import { requireCampaignAccess } from "@/lib/campaign-access";
 import { canReadVisibility, canWriteContent } from "@/lib/permissions";
 
 export default async function AssetsPage({ params }: { params: Promise<{ slug: string }> }) {
-  const user = await requireUser();
   const { slug } = await params;
-  const context = await getCampaignForUser(slug, user.id);
-
-  if (!context) {
-    notFound();
-  }
+  const context = await requireCampaignAccess(slug);
+  const { user } = context;
 
   const allAssets = await db.select().from(assets).where(eq(assets.campaignId, context.campaign.id));
   const readableAssets = allAssets.filter((asset) =>

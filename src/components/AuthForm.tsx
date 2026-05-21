@@ -9,7 +9,7 @@ export function SignInForm({ error }: { error?: string }) {
         <h1>Anmelden</h1>
         <p className="muted">Zurueck an den Spieltisch.</p>
       </div>
-      {error ? <p className="error">Die Anmeldung ist fehlgeschlagen.</p> : null}
+      {error ? <p className="error">Die Anmeldung ist fehlgeschlagen. Bitte pruefe E-Mail und Passwort.</p> : null}
       <form className="form" action={signInAction}>
         <label className="field">
           <span>E-Mail</span>
@@ -37,7 +37,13 @@ export function SignUpForm({ error }: { error?: string }) {
         <h1>Registrieren</h1>
         <p className="muted">Der erste Account wird Instanz-Admin.</p>
       </div>
-      {error ? <p className="error">Bitte pruefe E-Mail, Namen und ein Passwort mit mindestens 12 Zeichen.</p> : null}
+      {error ? (
+        <p className="error">
+          {error === "email-exists"
+            ? "Diese E-Mail-Adresse ist bereits registriert."
+            : "Bitte pruefe E-Mail, Namen und ein Passwort mit mindestens 12 Zeichen."}
+        </p>
+      ) : null}
       <form className="form" action={signUpAction}>
         <label className="field">
           <span>Name</span>

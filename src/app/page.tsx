@@ -1,10 +1,8 @@
-import { eq } from "drizzle-orm";
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { LayoutDashboard, Plus } from "lucide-react";
 
-import { db } from "@/db";
-import { campaignMembers, campaigns } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { listCampaignsForUser } from "@/lib/campaigns";
 
 export default async function HomePage() {
   const user = await getCurrentUser();
@@ -52,14 +50,7 @@ export default async function HomePage() {
     );
   }
 
-  const memberships = await db
-    .select({
-      role: campaignMembers.role,
-      campaign: campaigns
-    })
-    .from(campaignMembers)
-    .innerJoin(campaigns, eq(campaignMembers.campaignId, campaigns.id))
-    .where(eq(campaignMembers.userId, user.id));
+  const memberships = await listCampaignsForUser(user.id);
 
   return (
     <section className="stack">
@@ -68,10 +59,16 @@ export default async function HomePage() {
           <h1>Deine Kampagnen</h1>
           <p>Wikis, Rollen und Assets fuer deine Runden.</p>
         </div>
-        <Link className="button" href="/campaigns/new">
-          <Plus size={18} aria-hidden />
-          Kampagne
-        </Link>
+        <div className="inline-actions">
+          <Link className="button secondary" href="/dashboard">
+            <LayoutDashboard size={18} aria-hidden />
+            Dashboard
+          </Link>
+          <Link className="button" href="/campaigns/new">
+            <Plus size={18} aria-hidden />
+            Kampagne
+          </Link>
+        </div>
       </div>
 
       {memberships.length === 0 ? (

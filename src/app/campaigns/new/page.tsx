@@ -1,19 +1,26 @@
 import { createCampaignAction } from "@/app/actions";
 import { requireUser } from "@/lib/auth";
 
-export default async function NewCampaignPage() {
+export default async function NewCampaignPage({
+  searchParams
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   await requireUser();
+  const params = await searchParams;
 
   return (
     <section className="two-column">
       <div className="page-title">
         <div>
           <h1>Neue Kampagne</h1>
-          <p>Owner-Rolle, Wiki und Einstellungen werden direkt angelegt.</p>
+          <p>Du wirst automatisch als campaign_admin eingetragen.</p>
         </div>
       </div>
       <section className="panel">
+        {params.error ? <p className="error">Bitte gib einen Kampagnennamen an.</p> : null}
         <form className="form" action={createCampaignAction}>
+          <input type="hidden" name="visibility" value="private" />
           <label className="field">
             <span>Name</span>
             <input className="input" name="name" required />

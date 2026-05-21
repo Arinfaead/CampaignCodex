@@ -3,7 +3,7 @@ import type { PageVisibility } from "@/db/schema";
 const options: Array<{ value: PageVisibility; label: string }> = [
   { value: "campaign", label: "Kampagne" },
   { value: "public", label: "Public" },
-  { value: "gm", label: "Nur GM" },
+  { value: "gm", label: "Nur Admins" },
   { value: "private", label: "Privat" }
 ];
 

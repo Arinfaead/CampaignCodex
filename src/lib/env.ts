@@ -16,7 +16,11 @@ const envSchema = z.object({
   S3_BUCKET: z.string().min(1),
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
-  S3_FORCE_PATH_STYLE: booleanFromString.default("true")
+  S3_FORCE_PATH_STYLE: booleanFromString.default("true"),
+  OAUTH_GOOGLE_CLIENT_ID: z.string().optional(),
+  OAUTH_GOOGLE_CLIENT_SECRET: z.string().optional(),
+  OAUTH_GITHUB_CLIENT_ID: z.string().optional(),
+  OAUTH_GITHUB_CLIENT_SECRET: z.string().optional()
 });
 
 const buildDefaults =
@@ -45,5 +49,9 @@ export const env = envSchema.parse({
   S3_BUCKET: process.env.S3_BUCKET ?? buildDefaults.S3_BUCKET,
   S3_ACCESS_KEY: process.env.S3_ACCESS_KEY ?? buildDefaults.S3_ACCESS_KEY,
   S3_SECRET_KEY: process.env.S3_SECRET_KEY ?? buildDefaults.S3_SECRET_KEY,
-  S3_FORCE_PATH_STYLE: process.env.S3_FORCE_PATH_STYLE ?? buildDefaults.S3_FORCE_PATH_STYLE
+  S3_FORCE_PATH_STYLE: process.env.S3_FORCE_PATH_STYLE ?? buildDefaults.S3_FORCE_PATH_STYLE,
+  OAUTH_GOOGLE_CLIENT_ID: process.env.OAUTH_GOOGLE_CLIENT_ID,
+  OAUTH_GOOGLE_CLIENT_SECRET: process.env.OAUTH_GOOGLE_CLIENT_SECRET,
+  OAUTH_GITHUB_CLIENT_ID: process.env.OAUTH_GITHUB_CLIENT_ID,
+  OAUTH_GITHUB_CLIENT_SECRET: process.env.OAUTH_GITHUB_CLIENT_SECRET
 });

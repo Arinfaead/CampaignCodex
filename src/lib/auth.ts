@@ -1,11 +1,13 @@
 import { and, eq, gt } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { notFound } from "next/navigation";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db";
 import { sessions, users, type User } from "@/db/schema";
 import { addDays, createSecretToken, hashToken } from "@/lib/security";
 import { env } from "@/lib/env";
+import { isInstanceAdmin } from "@/lib/permissions";
 
 export const sessionCookieName = "campaigncodex_session";
 
@@ -31,6 +33,16 @@ export async function requireUser() {
   const user = await getCurrentUser();
   if (!user) {
     redirect("/auth/sign-in");
+  }
+
+  return user;
+}
+
+export async function requireInstanceAdmin() {
+  const user = await requireUser();
+
+  if (!isInstanceAdmin(user)) {
+    notFound();
   }
 
   return user;

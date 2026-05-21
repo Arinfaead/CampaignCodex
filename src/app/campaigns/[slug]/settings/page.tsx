@@ -1,13 +1,10 @@
 import { eq } from "drizzle-orm";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 
 import { createInviteAction } from "@/app/actions";
 import { db } from "@/db";
 import { campaignInvites, campaignMembers, users } from "@/db/schema";
-import { requireUser } from "@/lib/auth";
-import { getCampaignForUser } from "@/lib/campaign-access";
-import { canManageCampaign } from "@/lib/permissions";
+import { requireCampaignAdmin } from "@/lib/campaign-access";
 import { env } from "@/lib/env";
 
 export default async function CampaignSettingsPage({
@@ -17,14 +14,9 @@ export default async function CampaignSettingsPage({
   params: Promise<{ slug: string }>;
   searchParams: Promise<{ invite?: string }>;
 }) {
-  const user = await requireUser();
   const { slug } = await params;
   const query = await searchParams;
-  const context = await getCampaignForUser(slug, user.id);
-
-  if (!context || !canManageCampaign(context.membership.role)) {
-    notFound();
-  }
+  const context = await requireCampaignAdmin(slug);
 
   const members = await db
     .select({
@@ -83,9 +75,9 @@ export default async function CampaignSettingsPage({
             </label>
             <label className="field">
               <span>Rolle</span>
-              <select className="select" name="role" defaultValue="player">
-                <option value="gm">GM</option>
-                <option value="player">Player</option>
+              <select className="select" name="role" defaultValue="member">
+                <option value="campaign_admin">Campaign Admin</option>
+                <option value="member">Member</option>
                 <option value="viewer">Viewer</option>
               </select>
             </label>

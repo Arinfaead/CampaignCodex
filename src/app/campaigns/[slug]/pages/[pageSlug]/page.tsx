@@ -3,8 +3,7 @@ import { notFound } from "next/navigation";
 
 import { updatePageAction } from "@/app/actions";
 import { VisibilitySelect } from "@/components/VisibilitySelect";
-import { requireUser } from "@/lib/auth";
-import { getCampaignForUser, getReadablePage } from "@/lib/campaign-access";
+import { getReadablePage, requireCampaignAccess } from "@/lib/campaign-access";
 import { renderMarkdown } from "@/lib/markdown";
 import { canWriteContent } from "@/lib/permissions";
 
@@ -13,13 +12,9 @@ export default async function WikiPage({
 }: {
   params: Promise<{ slug: string; pageSlug: string }>;
 }) {
-  const user = await requireUser();
   const { slug, pageSlug } = await params;
-  const context = await getCampaignForUser(slug, user.id);
-
-  if (!context) {
-    notFound();
-  }
+  const context = await requireCampaignAccess(slug);
+  const { user } = context;
 
   const page = await getReadablePage(context.campaign.id, pageSlug, user.id, context.membership.role);
 

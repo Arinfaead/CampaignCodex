@@ -1,7 +1,7 @@
 import type { CampaignRole, PageVisibility, User } from "@/db/schema";
 
-const writerRoles = new Set<CampaignRole>(["owner", "gm", "player"]);
-const managerRoles = new Set<CampaignRole>(["owner", "gm"]);
+const writerRoles = new Set<CampaignRole>(["campaign_admin", "member"]);
+const managerRoles = new Set<CampaignRole>(["campaign_admin"]);
 
 export function canManageCampaign(role: CampaignRole) {
   return managerRoles.has(role);
@@ -24,5 +24,5 @@ export function canReadVisibility(role: CampaignRole, visibility: PageVisibility
 }
 
 export function isInstanceAdmin(user: User) {
-  return user.role === "admin";
+  return user.role === "instance_admin";
 }

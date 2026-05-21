@@ -199,6 +199,13 @@ main {
   margin-bottom: 22px;
 }
 
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -372,6 +379,7 @@ main {
 
   .topbar,
   .page-title,
+  .section-heading,
   .asset-row,
   .list-row {
     align-items: flex-start;

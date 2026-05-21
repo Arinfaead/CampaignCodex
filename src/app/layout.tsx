@@ -30,6 +30,8 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           <nav className="topnav" aria-label="Hauptnavigation">
             {user ? (
               <>
+                <Link href="/dashboard">Dashboard</Link>
+                <Link href="/campaigns">Kampagnen</Link>
                 <span className="user-pill">
                   <Shield size={15} aria-hidden />
                   {user.displayName}

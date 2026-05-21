@@ -1,204 +1,123 @@
 # CampaignCodex
 
-CampaignCodex is a self-hosted open-source web app for pen-and-paper groups. Dungeon Masters and players can maintain campaign wikis, store lore as Markdown, invite members, and control access through campaign roles and page visibility.
-
-The project is built for local and self-hosted operation:
-
-```bash
-nano .env
-nano docker-compose.yml
-docker compose up -d
-```
-
-Paste the `.env` and `docker-compose.yml` from this repository into those files. No `git clone`, local Node.js, npm, or build step is required for operators. Docker Compose pulls the published CampaignCodex image and runs database migrations, PostgreSQL, and MinIO inside containers.
-
-The web app is available at `http://localhost:8080`. MinIO's console is available at `http://localhost:9001`.
+CampaignCodex ist eine Webanwendung zur Verwaltung, Dokumentation und kollaborativen Ausarbeitung von Kampagnen. Der erste Sprint legt das technische Fundament: lokale E-Mail/Passwort-Authentifizierung, serverseitige Sessions, PostgreSQL mit Drizzle ORM, Kampagnenerstellung und ein zentrales Rollen- und Berechtigungssystem.
 
 ## Stack
 
-- Next.js App Router with TypeScript strict mode
-- PostgreSQL as the primary database
-- Drizzle ORM schema definitions
-- SQL migrations executed on container startup
-- MinIO as S3-compatible object storage
-- Docker Compose for local and self-hosted deployment
+- Next.js App Router mit TypeScript
+- PostgreSQL
+- Drizzle ORM
+- Lokale Authentifizierung mit gehashten Passwoertern
+- Serverseitige Session-Cookies
+- Zod fuer zentrale Eingabevalidierung
+- MinIO/S3-kompatibler Speicher ist fuer vorhandene Asset-Funktionen angebunden
 
-## Core Features
+## Setup
 
-- Email/password authentication with scrypt password hashing and hashed session tokens
-- Campaign creation with owner, GM, player, and viewer roles
-- Markdown wiki pages with server-side sanitization
-- Page visibility levels: public, campaign, GM-only, and private
-- Invitation links for adding users to campaigns
-- Asset uploads stored through a MinIO/S3 abstraction
-- Docker-first local startup with PostgreSQL and MinIO
+```bash
+cp .env.example .env
+# Platzhalter-Secrets in .env anpassen
+docker compose up -d
+```
 
-## Development
+Die App laeuft standardmaessig unter `http://localhost:8080`. MinIOs Konsole ist unter `http://localhost:9001` erreichbar.
 
-For local development outside Docker, install dependencies and run checks:
+Fuer lokale Entwicklung ausserhalb von Docker:
 
 ```bash
 npm install
-npm run lint
-npm run typecheck
-npm run build
+npm run db:migrate
+npm run dev
 ```
 
-Run migrations against the configured database:
+## Umgebungsvariablen
+
+Wichtige Werte aus `.env.example`:
+
+- `DATABASE_URL`: PostgreSQL-Verbindung der App.
+- `SESSION_SECRET`: Secret fuer Hashing der Session-Tokens. In echten Umgebungen lang und zufaellig setzen.
+- `COOKIE_SECURE`: In HTTPS-Umgebungen auf `true` setzen.
+- `ALLOW_REGISTRATION`: Steuert offene Registrierung nach dem ersten Admin-Account.
+- `PUBLIC_URL`: Externe Basis-URL, unter anderem fuer Einladungslinks.
+- `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`: S3/MinIO-Konfiguration.
+- `OAUTH_GOOGLE_CLIENT_ID`, `OAUTH_GOOGLE_CLIENT_SECRET`, `OAUTH_GITHUB_CLIENT_ID`, `OAUTH_GITHUB_CLIENT_SECRET`: Platzhalter fuer spaetere OAuth-Anbindung.
+
+`.env` wird nicht versioniert. Nur `.env.example` gehoert ins Repository.
+
+## Datenbank
+
+Migrationen liegen als auditierbare SQL-Dateien in `migrations/`.
 
 ```bash
 npm run db:migrate
 ```
 
-Add schema changes as explicit SQL files in `migrations/` and keep `src/db/schema.ts` aligned with the database shape.
+Das aktuelle Fundament enthaelt unter anderem:
 
-## Configuration
+- `users` mit `email`, `password_hash`, `display_name`, `role`
+- `sessions` mit eigener `id`, gehashtem Token, Ablaufzeit und Nutzerbezug
+- `campaigns` mit `created_by_user_id`, `visibility`, Name und Beschreibung
+- `campaign_members` mit eigener `id`, Kampagnen-/Nutzerbezug und Kampagnenrolle
+- `oauth_accounts` als vorbereitete Struktur fuer spaetere OAuth-Provider
 
-`docker compose up -d` works with only the copied `.env` and `docker-compose.yml` files. Before exposing an instance beyond a local machine, edit the placeholder secrets in `.env`. Important settings:
+## Rollenmodell
 
-- `DATABASE_URL` points the app at PostgreSQL.
-- `SESSION_SECRET` is mixed into session-token hashes.
-- `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, and `S3_SECRET_KEY` configure S3-compatible storage.
-- `COOKIE_SECURE=true` should be used behind HTTPS.
-- `ALLOW_REGISTRATION=false` disables open sign-up after the first admin account exists.
+Instanzrollen:
 
-## Architecture Decisions
+- `instance_admin`: darf administrative Aktionen auf Instanzebene ausfuehren.
+- `user`: normaler angemeldeter Nutzer.
 
-1. Markdown is stored as text in PostgreSQL and rendered server-side through `markdown-it` plus `sanitize-html`.
-2. Uploaded files never live in the database or app filesystem. The app stores object metadata in PostgreSQL and binary content in MinIO through the S3 API.
-3. Authorization is checked server-side in page loaders, server actions, and asset routes.
-4. The first registered user becomes an instance admin. Campaign access is still membership-based.
-5. Migrations are plain SQL files in `migrations/` so self-hosted operators can audit database changes easily.
+Kampagnenrollen:
 
-## Standalone Setup
+- `campaign_admin`: darf die eigene Kampagne administrieren.
+- `member`: darf als berechtigtes Mitglied Kampagneninhalte sehen und vorbereitete Inhalte bearbeiten.
+- `viewer`: darf berechtigte Kampagneninhalte lesen.
 
-Create `.env`, paste the following content, and adjust the placeholder secrets when needed.
+Jeder angemeldete Nutzer darf eine eigene Kampagne erstellen. Der Ersteller wird automatisch als `campaign_admin` in `campaign_members` eingetragen. Private Kampagnen werden nur ueber serverseitig gepruefte Mitgliedschaften angezeigt.
 
-```env
-# CampaignCodex image
-CAMPAIGNCODEX_IMAGE=ghcr.io/arinfaead/campaigncodex:v1.1.0
-CAMPAIGNCODEX_PLATFORM=linux/amd64
+## Sicherheitsentscheidungen
 
-# Web app
-APP_PORT=8080
-PORT=3000
-PUBLIC_URL=http://localhost:8080
-COOKIE_SECURE=false
-ALLOW_REGISTRATION=true
-SESSION_SECRET=change-this-to-a-long-random-secret
+- Passwoerter werden nie im Klartext gespeichert, sondern per `scrypt` mit Salt gehasht.
+- Session-Tokens werden nur gehasht in PostgreSQL gespeichert.
+- Session-Cookies sind `httpOnly`, `sameSite=lax` und koennen per `COOKIE_SECURE=true` auf HTTPS-only gesetzt werden.
+- Geschuetzte Seiten nutzen serverseitige Guards wie `requireUser()`, `requireCampaignAccess()` und `requireCampaignAdmin()`.
+- Rollenpruefungen liegen zentral in `src/lib/permissions.ts` und `src/lib/campaign-access.ts`.
+- Eingaben fuer Registrierung, Login, Kampagnenerstellung und weitere Server Actions werden mit Zod validiert.
+- Datenbankzugriffe laufen ueber Drizzle und parametrisierte Queries.
+- Fehlermeldungen an Nutzer bleiben bewusst allgemein und geben keine internen Details preis.
 
-# PostgreSQL
-POSTGRES_IMAGE=postgres:16-alpine
-POSTGRES_DB=campaign_codex
-POSTGRES_USER=campaign_codex
-POSTGRES_PASSWORD=change-this-password
+## Wichtige Pfade
 
-# MinIO
-MINIO_IMAGE=minio/minio:RELEASE.2025-04-22T22-12-26Z
-MINIO_MC_IMAGE=minio/mc:RELEASE.2025-04-16T18-13-26Z
-MINIO_API_PORT=9000
-MINIO_CONSOLE_PORT=9001
-MINIO_ROOT_USER=campaigncodex
-MINIO_ROOT_PASSWORD=change-this-minio-root-password
+- `src/db/schema.ts`: Drizzle-Schema.
+- `migrations/`: SQL-Migrationen.
+- `src/lib/auth.ts`: Session- und Nutzer-Guards.
+- `src/lib/campaign-access.ts`: Kampagnenzugriff und Kampagnen-Admin-Guards.
+- `src/lib/permissions.ts`: Rollen- und Sichtbarkeitsregeln.
+- `src/lib/validation.ts`: Zentrale Zod-Schemas.
+- `src/app/dashboard/page.tsx`: Geschuetztes Dashboard.
+- `src/app/campaigns/page.tsx`: Geschuetzte Kampagnenliste.
+- `src/app/campaigns/new/page.tsx`: Kampagnenerstellung.
 
-# S3-compatible app storage
-S3_ENDPOINT=http://minio:9000
-S3_REGION=us-east-1
-S3_BUCKET=campaigncodex
-S3_ACCESS_KEY=campaigncodex-app
-S3_SECRET_KEY=change-this-minio-secret
-S3_FORCE_PATH_STYLE=true
+## Qualitaetssicherung
+
+Ausgefuehrte Checks:
+
+```bash
+tsc --noEmit
+eslint .
 ```
 
-Create `docker-compose.yml`, paste the following content, save, and run `docker compose up -d`.
+Manuelle Pruefungen nach Datenbankstart:
 
-```yaml
-services:
-  app:
-    image: ${CAMPAIGNCODEX_IMAGE}
-    platform: ${CAMPAIGNCODEX_PLATFORM}
-    environment:
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      SESSION_SECRET: ${SESSION_SECRET}
-      PUBLIC_URL: ${PUBLIC_URL}
-      COOKIE_SECURE: ${COOKIE_SECURE}
-      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION}
-      S3_ENDPOINT: ${S3_ENDPOINT}
-      S3_REGION: ${S3_REGION}
-      S3_BUCKET: ${S3_BUCKET}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
-      S3_SECRET_KEY: ${S3_SECRET_KEY}
-      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE}
-      PORT: ${PORT}
-    ports:
-      - "${APP_PORT}:${PORT}"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-    restart: unless-stopped
+1. Ersten Nutzer registrieren und pruefen, dass er `instance_admin` wird.
+2. Zweiten Nutzer registrieren und pruefen, dass er `user` wird.
+3. Als eingeloggter Nutzer eine Kampagne erstellen.
+4. In der Datenbank pruefen, dass der Ersteller `campaign_admin` in `campaign_members` ist.
+5. Ausloggen und pruefen, dass `/dashboard`, `/campaigns`, `/campaigns/new` und Kampagnendetails nicht erreichbar sind.
+6. Als anderer Nutzer pruefen, dass private Kampagnen ohne Mitgliedschaft nicht sichtbar sind.
 
-  postgres:
-    image: ${POSTGRES_IMAGE}
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
+Der Produktionsbuild kann in dieser Codex-Shell blockieren, wenn Next.js ein macOS-SWC-Paket nachladen moechte und kein `npm` im Shell-Pfad verfuegbar ist. In einer normalen Node/npm-Umgebung sollte `npm run build` nach Installation der optionalen Next-SWC-Abhaengigkeiten ausgefuehrt werden.
 
-  minio:
-    image: ${MINIO_IMAGE}
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    ports:
-      - "${MINIO_API_PORT}:9000"
-      - "${MINIO_CONSOLE_PORT}:9001"
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
+## Lizenz
 
-  minio-init:
-    image: ${MINIO_MC_IMAGE}
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      S3_BUCKET: ${S3_BUCKET}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
-      S3_SECRET_KEY: ${S3_SECRET_KEY}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-        mc mb --ignore-existing "local/$$S3_BUCKET"
-        mc admin user add local "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" || true
-        mc admin policy attach local readwrite --user "$$S3_ACCESS_KEY"
-
-volumes:
-  postgres-data:
-  minio-data:
-```
-
-## License
-
-CampaignCodex is licensed under the GNU Affero General Public License v3.0 only. See `LICENSE`.
+CampaignCodex ist unter der GNU Affero General Public License v3.0 only lizenziert. Siehe `LICENSE`.

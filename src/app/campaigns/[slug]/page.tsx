@@ -1,24 +1,18 @@
 import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { FilePlus, Image as ImageIcon, Settings } from "lucide-react";
-import { notFound } from "next/navigation";
 
 import { createPageAction } from "@/app/actions";
 import { db } from "@/db";
 import { wikiPages } from "@/db/schema";
 import { VisibilitySelect } from "@/components/VisibilitySelect";
-import { requireUser } from "@/lib/auth";
-import { getCampaignForUser } from "@/lib/campaign-access";
+import { requireCampaignAccess } from "@/lib/campaign-access";
 import { canManageCampaign, canReadVisibility, canWriteContent } from "@/lib/permissions";
 
 export default async function CampaignPage({ params }: { params: Promise<{ slug: string }> }) {
-  const user = await requireUser();
   const { slug } = await params;
-  const context = await getCampaignForUser(slug, user.id);
-
-  if (!context) {
-    notFound();
-  }
+  const context = await requireCampaignAccess(slug);
+  const { user } = context;
 
   const pages = await db.select().from(wikiPages).where(eq(wikiPages.campaignId, context.campaign.id));
   const readablePages = pages.filter((page) =>
@@ -32,6 +26,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ slug:
           <span className="badge">{context.membership.role}</span>
           <h1>{context.campaign.name}</h1>
           <p>{context.campaign.description || "Kampagnenwiki ohne Beschreibung."}</p>
+          <p className="muted">Sichtbarkeit: {context.campaign.visibility}</p>
         </div>
         <div className="inline-actions">
           <Link className="icon-button" href={`/campaigns/${slug}/assets`} title="Assets" aria-label="Assets">
@@ -82,6 +77,13 @@ export default async function CampaignPage({ params }: { params: Promise<{ slug:
                 Seite speichern
               </button>
             </form>
+          </section>
+        ) : null}
+
+        {canManageCampaign(context.membership.role) ? (
+          <section className="panel stack">
+            <h2>Adminbereich</h2>
+            <p className="muted">Grundlegende Kampagnenverwaltung ist vorbereitet. Erweiterte Inhalte folgen spaeter.</p>
           </section>
         ) : null}
       </div>
