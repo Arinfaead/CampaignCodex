@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v0.1.0-beta.1"
+        description: "Release tag, for example v0.2.0-beta.1 or v1.0.0 after explicit approval"
         required: true
 
 permissions:
@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Resolve release tag
         id: release
@@ -35,10 +37,42 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Build categorized release notes
+        shell: bash
+        run: |
+          TAG="${{ steps.release.outputs.tag }}"
+          PREVIOUS_TAG="$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n 1 || true)"
+          RANGE="$TAG"
+          if [ -n "$PREVIOUS_TAG" ]; then
+            RANGE="${PREVIOUS_TAG}..${TAG}"
+          fi
+
+          write_section() {
+            local title="$1"
+            local pattern="$2"
+            echo "## ${title}" >> release-notes.md
+            local lines
+            lines="$(git log "$RANGE" --pretty=format:'- %s' --extended-regexp --regexp-ignore-case --grep="$pattern" || true)"
+            if [ -n "$lines" ]; then
+              echo "$lines" >> release-notes.md
+            else
+              echo "- Keine Einträge." >> release-notes.md
+            fi
+            echo "" >> release-notes.md
+          }
+
+          echo "# CampaignCodex ${TAG}" > release-notes.md
+          echo "" >> release-notes.md
+          write_section "Hinzugefügt" "^(add|added|feat|feature|füge|hinzu|implement)"
+          write_section "Gepatcht" "^(fix|fixed|patch|patched|hotfix|repair|korrig|beheb|update|change|adjust|refactor)"
+          write_section "Gelöscht" "^(remove|removed|delete|deleted|drop|dropped|entfern|lösch)"
+          echo "## Vollständiger Commit-Verlauf" >> release-notes.md
+          git log "$RANGE" --pretty=format:'- %h %s' >> release-notes.md
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
           name: CampaignCodex ${{ steps.release.outputs.tag }}
           prerelease: ${{ steps.release.outputs.prerelease }}
-          generate_release_notes: true
+          body_path: release-notes.md

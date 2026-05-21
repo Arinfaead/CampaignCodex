@@ -24,7 +24,7 @@ from psycopg.rows import dict_row
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "static"
-APP_VERSION = os.environ.get("CAMPAIGN_CODEX_VERSION", "0.1.0-beta.1")
+APP_VERSION = os.environ.get("CAMPAIGN_CODEX_VERSION", "1.0.0")
 APP_REPOSITORY = os.environ.get("CAMPAIGN_CODEX_REPOSITORY", "Arinfaead/CampaignCodex")
 LOG_FILE = Path(os.environ.get("CAMPAIGN_CODEX_LOG_FILE", str(ROOT / "data" / "campaigncodex.log")))
 DATABASE_URL = os.environ.get(

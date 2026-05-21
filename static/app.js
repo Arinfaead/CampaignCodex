@@ -6,12 +6,12 @@ const state = {
   adminSettings: null,
   adminSettingsTab: "users",
   adminAuthTab: "local",
-  activeSection: "all",
+  activeSection: "locations",
   inviteToken: new URLSearchParams(location.search).get("invite"),
 };
 
 const sections = {
-  overview: { label: "Weltübersicht", scope: "wiki" },
+  overview: { label: "Archiv", scope: "wiki" },
   locations: { label: "Orte", scope: "wiki" },
   characters: { label: "NSCs & Figuren", scope: "wiki" },
   factions: { label: "Fraktionen", scope: "wiki" },
@@ -25,7 +25,7 @@ const sections = {
 };
 
 const templates = {
-  generic: { label: "Freier Wiki-Artikel", category: "overview", visibility: "players", title: "Neuer Artikel", fields: ["Kurzbeschreibung", "Details", "Verknüpfte Artikel", "Offene Fragen"] },
+  generic: { label: "Freier Wiki-Artikel", category: "locations", visibility: "players", title: "Neuer Artikel", fields: ["Kurzbeschreibung", "Details", "Verknüpfte Artikel", "Offene Fragen"] },
   location: { label: "Ort / Siedlung", category: "locations", visibility: "players", title: "Neuer Ort", fields: ["Kurzbeschreibung", "Atmosphäre", "Wichtige Orte", "Bewohner", "Geheimnisse", "Abenteueraufhänger"] },
   character: { label: "NSC / Charakter", category: "characters", visibility: "players", title: "Neue Figur", fields: ["Rolle in der Welt", "Aussehen und Auftreten", "Ziele", "Beziehungen", "Was die Spieler wissen", "DM Geheimnisse"] },
   faction: { label: "Fraktion / Organisation", category: "factions", visibility: "players", title: "Neue Fraktion", fields: ["Kurzprofil", "Agenda", "Ressourcen", "Verbündete", "Feinde", "Einflussgebiete", "Geheimnisse"] },
@@ -96,10 +96,14 @@ function showApp() {
   $("appView").classList.remove("hidden");
   $("currentUser").textContent = `${state.user.display_name} · ${state.user.global_role}`;
   $("adminSettingsNav").classList.toggle("hidden", state.user.global_role !== "admin");
+  $("campaignSettingsNav").classList.add("hidden");
 }
 
 function renderStaticOptions() {
-  $("categoryInput").innerHTML = Object.entries(sections).map(([key, section]) => `<option value="${key}">${escapeHtml(section.label)}</option>`).join("");
+  $("categoryInput").innerHTML = Object.entries(sections)
+    .filter(([key]) => key !== "overview")
+    .map(([key, section]) => `<option value="${key}">${escapeHtml(section.label)}</option>`)
+    .join("");
   $("templateInput").innerHTML = Object.entries(templates).map(([key, template]) => `<option value="${key}">${escapeHtml(template.label)}</option>`).join("");
 }
 
@@ -117,19 +121,18 @@ async function loadCampaign() {
     $("newPageButton").style.display = "none";
     $("newNoteButton").style.display = "none";
     $("addMemberButton").style.display = "none";
-    $("dmTab").style.display = "none";
     $("members").innerHTML = "";
     $("sectionNav").innerHTML = "";
     $("pages").innerHTML = `<div class="empty">Noch keine Kampagne vorhanden.</div>`;
     $("dmPages").innerHTML = "";
     $("notes").innerHTML = "";
     $("searchResults").innerHTML = "";
-    document.querySelector('[data-tab="settings"]').style.display = "none";
+    $("campaignSettingsNav").classList.add("hidden");
     $("adminSettingsNav").classList.toggle("hidden", state.user?.global_role !== "admin");
     return;
   }
   state.data = await api(`/api/campaign?campaign_id=${state.campaignId}`);
-  if (!canManage() && getSectionScope(state.activeSection) === "dm") state.activeSection = "all";
+  ensureVisibleSection();
   renderCampaign();
 }
 
@@ -141,9 +144,8 @@ function renderCampaign() {
   $("newPageButton").style.display = membership ? "inline-flex" : "none";
   $("newNoteButton").style.display = membership ? "inline-flex" : "none";
   $("addMemberButton").style.display = canManage() ? "inline-grid" : "none";
-  $("dmTab").style.display = canManage() ? "inline-flex" : "none";
   $("adminSettingsNav").classList.toggle("hidden", state.user.global_role !== "admin");
-  if (!canManage() && $("dmView").classList.contains("active")) activateTab("wiki");
+  $("campaignSettingsNav").classList.toggle("hidden", !canManage());
 
   $("members").innerHTML = members.map((member) => `<div class="member"><span>${escapeHtml(member.display_name)}</span><span class="role">${member.role}</span></div>`).join("");
   renderSectionNav();
@@ -157,18 +159,26 @@ function canManage() {
 }
 
 function renderSectionNav() {
-  const visibleSections = Object.entries(sections).filter(([, section]) => canManage() || section.scope !== "dm");
-  $("sectionNav").innerHTML = `
-    <button class="section-link ${state.activeSection === "all" ? "active" : ""}" data-section="all">Alle Artikel</button>
-    ${visibleSections.map(([key, section]) => `<button class="section-link ${state.activeSection === key ? "active" : ""}" data-section="${key}">${escapeHtml(section.label)}</button>`).join("")}
-  `;
-  document.querySelectorAll(".section-link").forEach((button) => {
+  const visibleSections = visibleCampaignSections();
+  $("sectionNav").innerHTML = visibleSections.map(([key, section]) => `<button class="section-link ${state.activeSection === key ? "active" : ""}" data-section="${key}">${escapeHtml(section.label)}</button>`).join("");
+  document.querySelectorAll("#sectionNav .section-link").forEach((button) => {
     button.addEventListener("click", () => {
       state.activeSection = button.dataset.section;
+      activateTab(getSectionScope(state.activeSection) === "dm" ? "dm" : "wiki");
       renderSectionNav();
       renderPages();
     });
   });
+}
+
+function visibleCampaignSections() {
+  return Object.entries(sections).filter(([key, section]) => key !== "overview" && (canManage() || section.scope !== "dm"));
+}
+
+function ensureVisibleSection() {
+  const visibleKeys = visibleCampaignSections().map(([key]) => key);
+  if (!visibleKeys.includes(state.activeSection)) state.activeSection = visibleKeys[0] || "locations";
+  activateTab(getSectionScope(state.activeSection) === "dm" ? "dm" : "wiki");
 }
 
 function renderPages() {
@@ -181,7 +191,7 @@ function renderPages() {
 function filteredPages(scope) {
   return state.data.pages.filter((page) => {
     const section = sections[page.category] || sections.overview;
-    return section.scope === scope && (state.activeSection === "all" || state.activeSection === page.category);
+    return section.scope === scope && state.activeSection === page.category;
   });
 }
 
@@ -491,7 +501,7 @@ async function acceptInvite() {
 }
 
 function renderSettings() {
-  document.querySelector('[data-tab="settings"]').style.display = canManage() ? "inline-flex" : "none";
+  $("campaignSettingsNav").classList.toggle("hidden", !canManage());
   if (!canManage()) return;
   $("inviteList").innerHTML = state.data.invites.map((invite) => `<div class="member"><span>${escapeHtml(invite.invited_email || "Offener Link")}</span><span>${invite.accepted_at ? "angenommen" : invite.role}</span></div>`).join("");
   $("userList").innerHTML = state.data.users.map((user) => `<div class="member"><span>${escapeHtml(user.display_name)}</span><span>${escapeHtml(user.global_role)}</span></div>`).join("");
@@ -801,7 +811,7 @@ function openWikiLink(pageId) {
   const page = state.data?.pages.find((entry) => entry.id === pageId);
   if (!page) return;
   const scope = getSectionScope(page.category);
-  state.activeSection = page.category;
+  state.activeSection = page.category === "overview" ? visibleCampaignSections()[0]?.[0] || "locations" : page.category;
   activateTab(scope === "dm" ? "dm" : "wiki");
   renderSectionNav();
   renderPages();
@@ -868,6 +878,7 @@ $("inviteForm").addEventListener("submit", createInvite);
 $("userForm").addEventListener("submit", createUser);
 $("exportButton").addEventListener("click", exportCampaign);
 $("importButton").addEventListener("click", importCampaign);
+$("campaignSettingsButton").addEventListener("click", () => activateTab("settings"));
 $("adminSettingsButton").addEventListener("click", async () => {
   activateTab("adminSettings");
   await loadAdminSettings();

@@ -9,7 +9,7 @@ CampaignCodex ist ein kleines Open-Source-MVP für D&D Dungeon Master und Spiele
 - Optionaler OAuth2/OIDC-Login, z. B. mit Authentik
 - Einladungslinks für Kampagnen
 - DM- und Spieleransichten mit Seitenrechten
-- Wiki-Abschnitte für Weltübersicht, Orte, NSCs, Fraktionen, Kreaturen, Artefakte, Plots, Lore und Regeln
+- Kampagnenabschnitte für Orte, NSCs, Fraktionen, Kreaturen, Artefakte, Plots, Lore und Regeln
 - Privater DM-Bereich für Spielerakten und geheime Vorbereitungsnotizen
 - Vorgefertigte Artikel-Templates für typische Worldbuilding-Einträge
 - Markdown-Editor mit Vorschau
@@ -181,7 +181,7 @@ DMs und Admins können Kampagnen in den Einstellungen als JSON exportieren und s
 
 ## Admin-Systemeinstellungen
 
-Admins sehen in der linken Navigation unter den Wiki-Abschnitten einen eigenen Bereich `Administration`. Dort liegen instanzweite Einstellungen:
+Admins sehen in der linken Navigation unter den Kampagnenabschnitten einen eigenen Bereich `Administration`. Dort liegen instanzweite Einstellungen:
 
 - Benutzerverwaltung für lokale Anmeldung, E-Mail-Authentifizierung, LDAP, Zwei-Faktor-Authentifizierung und SSO/OIDC.
 - Log-Ansicht für die aktuelle CampaignCodex-Logdatei.
@@ -205,14 +205,16 @@ Für normale Installation reicht die [docker-compose.yml](docker-compose.yml). D
 
 ## Releases
 
-CampaignCodex nutzt während der Beta SemVer-Tags mit `0.x`, zum Beispiel:
+CampaignCodex nutzt standardmäßig SemVer-Tags mit `0.x`, bis explizit eine andere Version freigegeben wird. Fuer Beta-Releases:
 
 ```bash
-git tag v0.1.0-beta.1
-git push origin v0.1.0-beta.1
+git tag v0.2.0-beta.1
+git push origin v0.2.0-beta.1
 ```
 
-Ein Tag mit `v*` erstellt automatisch ein GitHub Release. Tags mit `beta`, `alpha` oder `rc` werden als Prerelease markiert. Zusätzlich wird das Docker-Image mit dem Release-Tag veröffentlicht.
+Der erste explizit freigegebene Full Release ist `v1.0.0`.
+
+Ein Tag mit `v*` erstellt automatisch ein GitHub Release. Tags mit `beta`, `alpha` oder `rc` werden als Prerelease markiert. Jedes Release enthaelt die Abschnitte `Hinzugefuegt`, `Gepatcht` und `Geloescht`. Zusaetzlich wird das Docker-Image mit dem Release-Tag veroeffentlicht.
 
 ## Projektstruktur
 

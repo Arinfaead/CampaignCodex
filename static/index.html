@@ -82,13 +82,18 @@
         <button id="newCampaignButton" class="secondary">Neue Kampagne</button>
 
         <section>
-          <h2>Abschnitte</h2>
+          <h2>Kampagnenabschnitte</h2>
           <div id="sectionNav" class="section-nav"></div>
         </section>
 
         <section id="adminSettingsNav" class="hidden">
           <h2>Administration</h2>
           <button id="adminSettingsButton" class="section-link" data-tab="adminSettings">Einstellungen</button>
+        </section>
+
+        <section id="campaignSettingsNav" class="hidden">
+          <h2>Kampagne</h2>
+          <button id="campaignSettingsButton" class="section-link" data-tab="settings">Einstellungen</button>
         </section>
 
         <section class="members">
@@ -123,14 +128,6 @@
           <span id="inviteText"></span>
           <button id="acceptInviteButton">Einladung annehmen</button>
         </section>
-
-        <nav class="tabs" aria-label="Bereiche">
-          <button class="tab active" data-tab="wiki">Wiki</button>
-          <button id="dmTab" class="tab" data-tab="dm">DM-Bereich</button>
-          <button class="tab" data-tab="notes">Notizen</button>
-          <button class="tab" data-tab="search">Suche</button>
-          <button class="tab" data-tab="settings">Kampagne</button>
-        </nav>
 
         <section id="wikiView" class="panel active">
           <div id="pages" class="grid"></div>
