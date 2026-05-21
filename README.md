@@ -5,12 +5,11 @@ CampaignCodex is a self-hosted open-source web app for pen-and-paper groups. Dun
 The project is built for local and self-hosted operation:
 
 ```bash
-git clone <repository-url>
-cd campaigncodex
+nano docker-compose.yml
 docker compose up -d
 ```
 
-No local Node.js or npm installation is required for operators. Docker Compose builds the Next.js app image and runs dependency installation, database migrations, PostgreSQL, and MinIO inside containers.
+Paste the `docker-compose.yml` from this repository into that file. No `git clone`, local Node.js, npm, or build step is required for operators. Docker Compose pulls the published CampaignCodex image and runs database migrations, PostgreSQL, and MinIO inside containers.
 
 The web app is available at `http://localhost:8080`. MinIO's console is available at `http://localhost:9001`.
 
@@ -54,7 +53,7 @@ Add schema changes as explicit SQL files in `migrations/` and keep `src/db/schem
 
 ## Configuration
 
-`docker compose up -d` works without a local `.env` file by using development-safe defaults from `docker-compose.yml`. Before exposing an instance beyond a local machine, copy `.env.example` to `.env` and change all placeholder secrets. Important settings:
+`docker compose up -d` works with only the copied `docker-compose.yml` file. Before exposing an instance beyond a local machine, edit the placeholder secrets directly in `docker-compose.yml` or provide the same variables through an `.env` file. Important settings:
 
 - `DATABASE_URL` points the app at PostgreSQL.
 - `SESSION_SECRET` is mixed into session-token hashes.
@@ -69,6 +68,97 @@ Add schema changes as explicit SQL files in `migrations/` and keep `src/db/schem
 3. Authorization is checked server-side in page loaders, server actions, and asset routes.
 4. The first registered user becomes an instance admin. Campaign access is still membership-based.
 5. Migrations are plain SQL files in `migrations/` so self-hosted operators can audit database changes easily.
+
+## Standalone Docker Compose
+
+Create `docker-compose.yml`, paste the following content, save, and run `docker compose up -d`.
+
+```yaml
+services:
+  app:
+    image: ghcr.io/arinfaead/campaigncodex:v1.1.0
+    platform: linux/amd64
+    environment:
+      DATABASE_URL: postgres://campaign_codex:change-this-password@postgres:5432/campaign_codex
+      SESSION_SECRET: change-this-to-a-long-random-secret
+      PUBLIC_URL: http://localhost:8080
+      COOKIE_SECURE: "false"
+      ALLOW_REGISTRATION: "true"
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: campaigncodex
+      S3_ACCESS_KEY: campaigncodex-app
+      S3_SECRET_KEY: change-this-minio-secret
+      S3_FORCE_PATH_STYLE: "true"
+      PORT: "3000"
+    ports:
+      - "8080:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: campaign_codex
+      POSTGRES_USER: campaign_codex
+      POSTGRES_PASSWORD: change-this-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: campaigncodex
+      MINIO_ROOT_PASSWORD: change-this-minio-root-password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_BUCKET: campaigncodex
+      S3_ACCESS_KEY: campaigncodex-app
+      S3_SECRET_KEY: change-this-minio-secret
+      MINIO_ROOT_USER: campaigncodex
+      MINIO_ROOT_PASSWORD: change-this-minio-root-password
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+        mc admin user add local "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" || true
+        mc admin policy attach local readwrite --user "$$S3_ACCESS_KEY"
+
+volumes:
+  postgres-data:
+  minio-data:
+```
 
 ## License
 

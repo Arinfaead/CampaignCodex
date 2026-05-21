@@ -10,6 +10,7 @@
 - MinIO/S3-kompatible Storage-Schicht für Uploads statt lokaler Dateien oder Datenbank-BLOBs.
 - Docker Compose Stack mit App, PostgreSQL, MinIO und Bucket-Initialisierung.
 - Admin-Start ohne lokale Node.js- oder npm-Installation; Docker installiert App-Abhängigkeiten im Container.
+- Standalone-Compose-Betrieb ohne `git clone`; Admins können nur eine `docker-compose.yml` anlegen und starten.
 - Serverseitige Authentifizierung mit scrypt-Passwort-Hashes und gehashten Session-Tokens.
 - Rollen- und Sichtbarkeitsmodell für Owner, GM, Player und Viewer.
 - Sichere Markdown-Verarbeitung mit serverseitiger HTML-Sanitization.

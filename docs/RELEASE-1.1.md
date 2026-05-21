@@ -11,6 +11,7 @@ Release 1.1 ist ein architektureller Neustart von CampaignCodex als self-hosted 
 - MinIO als S3-kompatibler Objektspeicher.
 - Docker Compose Stack für App, PostgreSQL, MinIO und Bucket/User-Initialisierung.
 - Admin-Start ohne lokale Node.js- oder npm-Installation; Docker installiert App-Abhängigkeiten im Container.
+- Standalone-Installation über eine kopierte `docker-compose.yml` ohne `git clone`.
 - Authentifizierung mit scrypt-Passwort-Hashing und HttpOnly-Session-Cookies.
 - Kampagnen-Wiki mit Markdown-Speicherung und serverseitig sanitisiertem HTML-Rendering.
 - Rollenmodell: Owner, GM, Player, Viewer.
@@ -28,9 +29,8 @@ Die vorherige Implementierung nutzte eine kleine Flask/Static-Struktur. Release 
 ## Betrieb
 
 ```bash
-git clone <repository-url>
-cd campaigncodex
+nano docker-compose.yml
 docker compose up -d
 ```
 
-Danach ist CampaignCodex unter `http://localhost:8080` erreichbar.
+Die Compose-Datei kann direkt aus der README kopiert werden. Danach ist CampaignCodex unter `http://localhost:8080` erreichbar.

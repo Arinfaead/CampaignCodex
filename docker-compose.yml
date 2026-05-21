@@ -1,26 +1,22 @@
 services:
   app:
-    build:
-      context: .
-    image: ${CAMPAIGN_CODEX_IMAGE:-campaigncodex:1.1.0}
-    env_file:
-      - path: .env
-        required: false
+    image: ghcr.io/arinfaead/campaigncodex:v1.1.0
+    platform: linux/amd64
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-campaign_codex}:${POSTGRES_PASSWORD:-change-this-password}@postgres:5432/${POSTGRES_DB:-campaign_codex}
-      SESSION_SECRET: ${SESSION_SECRET:-change-this-to-a-long-random-secret}
-      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      DATABASE_URL: postgres://campaign_codex:change-this-password@postgres:5432/campaign_codex
+      SESSION_SECRET: change-this-to-a-long-random-secret
+      PUBLIC_URL: http://localhost:8080
+      COOKIE_SECURE: "false"
+      ALLOW_REGISTRATION: "true"
       S3_ENDPOINT: http://minio:9000
-      S3_REGION: ${S3_REGION:-us-east-1}
-      S3_BUCKET: ${S3_BUCKET:-campaigncodex}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-campaigncodex-app}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:-change-this-minio-secret}
-      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
-      PORT: ${PORT:-3000}
+      S3_REGION: us-east-1
+      S3_BUCKET: campaigncodex
+      S3_ACCESS_KEY: campaigncodex-app
+      S3_SECRET_KEY: change-this-minio-secret
+      S3_FORCE_PATH_STYLE: "true"
+      PORT: "3000"
     ports:
-      - "${APP_PORT:-8080}:${PORT:-3000}"
+      - "8080:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -33,9 +29,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-campaign_codex}
-      POSTGRES_USER: ${POSTGRES_USER:-campaign_codex}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-password}
+      POSTGRES_DB: campaign_codex
+      POSTGRES_USER: campaign_codex
+      POSTGRES_PASSWORD: change-this-password
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -49,8 +45,8 @@ services:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-campaigncodex}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-this-minio-root-password}
+      MINIO_ROOT_USER: campaigncodex
+      MINIO_ROOT_PASSWORD: change-this-minio-root-password
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -69,11 +65,11 @@ services:
       minio:
         condition: service_healthy
     environment:
-      S3_BUCKET: ${S3_BUCKET:-campaigncodex}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-campaigncodex-app}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:-change-this-minio-secret}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-campaigncodex}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-this-minio-root-password}
+      S3_BUCKET: campaigncodex
+      S3_ACCESS_KEY: campaigncodex-app
+      S3_SECRET_KEY: change-this-minio-secret
+      MINIO_ROOT_USER: campaigncodex
+      MINIO_ROOT_PASSWORD: change-this-minio-root-password
     entrypoint:
       - /bin/sh
       - -c
